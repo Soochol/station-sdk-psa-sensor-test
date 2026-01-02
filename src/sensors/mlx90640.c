@@ -31,12 +31,13 @@
 static SensorSpec_t current_spec;
 static bool spec_set = false;
 static bool initialized = false;
+static uint32_t init_tick = 0;  /* Tick when init completed, for warmup tracking */
 
-/* MLX90640 data buffers */
-static paramsMLX90640 mlx_params;
-static uint16_t eeData[832];
-static uint16_t frameData[834];
-static float mlxTemperatures[768];
+/* MLX90640 data buffers (non-static for external access in debug functions) */
+paramsMLX90640 mlx_params;
+uint16_t eeData[832];
+uint16_t frameData[834];
+float mlxTemperatures[768];
 
 /*============================================================================*/
 /* Debug Functions (conditionally compiled)                                   */
@@ -251,6 +252,7 @@ static HAL_StatusTypeDef MLX90640_Init_Driver(void)
     }
 
     initialized = true;
+    init_tick = HAL_GetTick();  /* Record init time for warmup tracking */
     DBG_PRINT("[MLX90640] Init complete!\r\n");
     return HAL_OK;
 }
@@ -313,6 +315,14 @@ static TestStatus_t MLX90640_RunTest(SensorResult_t* result)
             DBG_PRINT("[MLX90640] Init failed!\r\n");
             return STATUS_FAIL_INIT;
         }
+    }
+
+    /* Wait for sensor warmup if needed */
+    uint32_t elapsed = HAL_GetTick() - init_tick;
+    if (elapsed < MLX90640_WARMUP_TIME_MS) {
+        uint32_t wait_time = MLX90640_WARMUP_TIME_MS - elapsed;
+        DBG_PRINTF("[MLX90640] Waiting %lu ms for warmup...\r\n", wait_time);
+        HAL_Delay(wait_time);
     }
 
     /* Get frame data (need 2 subpages for full frame) */

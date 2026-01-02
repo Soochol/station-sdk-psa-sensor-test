@@ -106,6 +106,7 @@ typedef enum {
 #define MLX90640_REFRESH_RATE       4       /* 0=0.5Hz, 1=1Hz, 2=2Hz, 3=4Hz, 4=8Hz, 5=16Hz, 6=32Hz, 7=64Hz */
 #define MLX90640_RESOLUTION         19      /* ADC resolution: 16, 17, 18, or 19 bits */
 #define MLX90640_EMISSIVITY         0.95f   /* Default emissivity */
+#define MLX90640_WARMUP_TIME_MS     6000    /* Warmup time after init before valid readings (measured: ~5-6s) */
 
 #ifdef __cplusplus
 }

@@ -1,0 +1,209 @@
+# PSA Sensor Test Sequence Manifest
+# VL53L0X ToF 거리 센서와 MLX90640 IR 열화상 센서 테스트
+
+name: psa_sensor_test
+version: "1.0.0"
+author: "PSA Team"
+description: |
+  PSA(Preconfigured Sensor Array) 센서 테스트 시퀀스.
+  STM32H723 MCU와 UART 통신하여 VL53L0X, MLX90640 센서를 테스트합니다.
+
+# 실행 모드 설정
+modes:
+  automatic: true      # 자동 순차 실행
+  manual: true         # 수동 스텝별 실행
+  interactive: false
+
+# 진입점 설정
+entry_point:
+  module: sequence
+  class: PSASensorTestSequence
+
+# 하드웨어 정의
+hardware:
+  psa_mcu:
+    display_name: "PSA MCU (STM32H723)"
+    driver: psa_mcu
+    class: PSAMCUDriver
+    description: "STM32H723 MCU 센서 테스트 보드"
+    config_schema:
+      port:
+        type: string
+        required: true
+        default: "/dev/ttyUSB0"
+        description: "시리얼 포트 (예: /dev/ttyUSB0, COM3)"
+      baudrate:
+        type: integer
+        required: false
+        default: 115200
+        description: "통신 속도 (bps)"
+      timeout:
+        type: float
+        required: false
+        default: 5.0
+        min: 1.0
+        max: 30.0
+        description: "응답 대기 타임아웃 (초)"
+    manual_commands:
+      - name: ping
+        display_name: "연결 확인 (PING)"
+        category: diagnostic
+        description: "MCU 연결 상태 및 펌웨어 버전 확인"
+        parameters: []
+        returns:
+          type: string
+          description: "펌웨어 버전 (예: 1.0.0)"
+
+      - name: get_sensor_list
+        display_name: "센서 목록 조회"
+        category: diagnostic
+        description: "등록된 센서 목록 조회"
+        parameters: []
+        returns:
+          type: array
+          description: "센서 정보 리스트"
+
+      - name: test_vl53l0x
+        display_name: "VL53L0X 테스트"
+        category: measurement
+        description: "ToF 거리 센서 테스트 실행"
+        parameters:
+          - name: target_mm
+            display_name: "목표 거리"
+            type: integer
+            required: false
+            default: 500
+            min: 30
+            max: 2000
+            unit: "mm"
+          - name: tolerance_mm
+            display_name: "허용 오차"
+            type: integer
+            required: false
+            default: 100
+            min: 1
+            max: 500
+            unit: "mm"
+        returns:
+          type: object
+          description: "테스트 결과"
+
+      - name: test_mlx90640
+        display_name: "MLX90640 테스트"
+        category: measurement
+        description: "IR 열화상 센서 테스트 실행"
+        parameters:
+          - name: target_celsius
+            display_name: "목표 온도"
+            type: float
+            required: false
+            default: 25.0
+            min: -40.0
+            max: 300.0
+            unit: "C"
+          - name: tolerance_celsius
+            display_name: "허용 오차"
+            type: float
+            required: false
+            default: 10.0
+            min: 0.1
+            max: 50.0
+            unit: "C"
+        returns:
+          type: object
+          description: "테스트 결과"
+
+# 시퀀스 파라미터
+parameters:
+  # VL53L0X 파라미터
+  vl53l0x_target_mm:
+    display_name: "VL53L0X 목표 거리"
+    type: integer
+    default: 500
+    min: 30
+    max: 2000
+    unit: "mm"
+    description: "ToF 센서 목표 거리"
+
+  vl53l0x_tolerance_mm:
+    display_name: "VL53L0X 허용 오차"
+    type: integer
+    default: 100
+    min: 1
+    max: 500
+    unit: "mm"
+    description: "ToF 센서 허용 오차"
+
+  # MLX90640 파라미터
+  mlx90640_target_celsius:
+    display_name: "MLX90640 목표 온도"
+    type: float
+    default: 25.0
+    min: -40.0
+    max: 300.0
+    unit: "C"
+    description: "IR 센서 목표 온도 (섭씨)"
+
+  mlx90640_tolerance_celsius:
+    display_name: "MLX90640 허용 오차"
+    type: float
+    default: 10.0
+    min: 0.1
+    max: 50.0
+    unit: "C"
+    description: "IR 센서 허용 오차 (섭씨)"
+
+# 스텝 정의
+steps:
+  - name: initialize
+    display_name: "하드웨어 초기화"
+    order: 1
+    timeout: 30.0
+    manual:
+      skippable: false
+      auto_only: false
+      prompt: null
+      pause_before: false
+      pause_after: false
+
+  - name: test_vl53l0x
+    display_name: "VL53L0X 거리 테스트"
+    order: 2
+    timeout: 15.0
+    retry: 1
+    manual:
+      skippable: true
+      prompt: "VL53L0X ToF 거리 센서를 테스트합니다."
+      pause_before: false
+      pause_after: false
+      parameter_overrides:
+        - vl53l0x_target_mm
+        - vl53l0x_tolerance_mm
+
+  - name: test_mlx90640
+    display_name: "MLX90640 온도 테스트"
+    order: 3
+    timeout: 20.0
+    retry: 1
+    manual:
+      skippable: true
+      prompt: "MLX90640 IR 열화상 센서를 테스트합니다."
+      pause_before: false
+      pause_after: false
+      parameter_overrides:
+        - mlx90640_target_celsius
+        - mlx90640_tolerance_celsius
+
+  - name: finalize
+    display_name: "정리"
+    order: 99
+    timeout: 10.0
+    cleanup: true
+    manual:
+      skippable: false
+      auto_only: false
+
+# Python 의존성
+dependencies:
+  python:
+    - pyserial>=3.5

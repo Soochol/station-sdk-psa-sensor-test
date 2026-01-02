@@ -19,7 +19,9 @@ extern "C" {
 #include "protocol/protocol.h"
 #include "sensors/sensor_manager.h"
 #include "sensors/vl53l0x.h"
+#include "sensors/mlx90640.h"
 #include "test/test_runner.h"
+#include "MLX90640_API.h"
 }
 
 #include <stdio.h>
@@ -197,6 +199,157 @@ extern "C" void DBG_TestVL53L0X(void)
 }
 
 /*============================================================================*/
+/* MLX90640 Stabilization Time Measurement                                    */
+/*============================================================================*/
+
+/* External MLX90640 API variables (from mlx90640.c) */
+extern paramsMLX90640 mlx_params;
+extern uint16_t eeData[832];
+extern uint16_t frameData[834];
+extern float mlxTemperatures[768];
+
+/**
+ * @brief Measure MLX90640 stabilization time after boot
+ *
+ * Continuously reads temperature data and outputs via RTT to determine
+ * when the sensor stabilizes after power-on.
+ */
+extern "C" void DBG_MeasureMLX90640_StabilizationTime(void)
+{
+    int mlx_status;
+    uint32_t start_time = HAL_GetTick();
+    uint32_t elapsed;
+    int sample_count = 0;
+    const int MAX_SAMPLES = 100;  /* ~10 seconds at 100ms intervals */
+
+    SEGGER_RTT_printf(0, "\r\n");
+    SEGGER_RTT_printf(0, "========================================\r\n");
+    SEGGER_RTT_printf(0, "MLX90640 Stabilization Time Measurement\r\n");
+    SEGGER_RTT_printf(0, "========================================\r\n");
+    SEGGER_RTT_printf(0, "Boot time: %lu ms\r\n", start_time);
+    SEGGER_RTT_printf(0, "\r\n");
+
+    /* Check I2C4 device presence first */
+    SEGGER_RTT_printf(0, "[%lu ms] Checking MLX90640 on I2C4 @ 0x%02X...\r\n",
+                      HAL_GetTick(), MLX90640_I2C_ADDR);
+
+    HAL_StatusTypeDef hal_status = I2C_Handler_IsDeviceReady(MLX90640_I2C_BUS, MLX90640_I2C_ADDR, 100);
+    if (hal_status != HAL_OK) {
+        SEGGER_RTT_printf(0, "[ERROR] MLX90640 not found! hal_status=%d\r\n", hal_status);
+        return;
+    }
+    SEGGER_RTT_printf(0, "[OK] MLX90640 detected\r\n\r\n");
+
+    /* Initialize MLX90640 via sensor manager */
+    const SensorDriver_t* mlx_driver = SensorManager_GetByID(SENSOR_ID_MLX90640);
+    if (mlx_driver == NULL) {
+        SEGGER_RTT_printf(0, "[ERROR] MLX90640 driver not registered!\r\n");
+        return;
+    }
+
+    SEGGER_RTT_printf(0, "[%lu ms] Initializing MLX90640...\r\n", HAL_GetTick() - start_time);
+    hal_status = mlx_driver->init();
+    if (hal_status != HAL_OK) {
+        SEGGER_RTT_printf(0, "[ERROR] MLX90640 init failed! status=%d\r\n", hal_status);
+        return;
+    }
+
+    uint32_t init_time = HAL_GetTick() - start_time;
+    SEGGER_RTT_printf(0, "[%lu ms] MLX90640 initialized (init took %lu ms)\r\n\r\n",
+                      init_time, init_time);
+
+    /* Print header for CSV-style output */
+    SEGGER_RTT_printf(0, "Time(ms),Avg(C),Min(C),Max(C),Ta(C),Vdd(V),Center(C)\r\n");
+    SEGGER_RTT_printf(0, "----------------------------------------------------\r\n");
+
+    /* Continuous temperature measurement loop */
+    while (sample_count < MAX_SAMPLES) {
+        elapsed = HAL_GetTick() - start_time;
+
+        /* Get frame data */
+        mlx_status = MLX90640_GetFrameData(MLX90640_I2C_ADDR, frameData);
+        if (mlx_status < 0) {
+            SEGGER_RTT_printf(0, "[%lu ms] Frame error: %d\r\n", elapsed, mlx_status);
+            HAL_Delay(100);
+            continue;
+        }
+
+        /* Get ambient temperature and Vdd */
+        float ta = MLX90640_GetTa(frameData, &mlx_params);
+        float vdd = MLX90640_GetVdd(frameData, &mlx_params);
+        float tr = ta - 8.0f;
+
+        /* Calculate object temperatures */
+        MLX90640_CalculateTo(frameData, &mlx_params, MLX90640_EMISSIVITY, tr, mlxTemperatures);
+
+        /* Get second subpage for complete frame */
+        HAL_Delay(130);  /* Wait for next subpage at 8Hz */
+        mlx_status = MLX90640_GetFrameData(MLX90640_I2C_ADDR, frameData);
+        if (mlx_status >= 0) {
+            MLX90640_CalculateTo(frameData, &mlx_params, MLX90640_EMISSIVITY, tr, mlxTemperatures);
+        }
+
+        /* Calculate statistics */
+        float min_temp = mlxTemperatures[0];
+        float max_temp = mlxTemperatures[0];
+        float avg_temp = 0;
+        float center_temp = mlxTemperatures[12 * 32 + 16];  /* Center pixel (16, 12) */
+
+        for (int i = 0; i < 768; i++) {
+            if (mlxTemperatures[i] < min_temp) min_temp = mlxTemperatures[i];
+            if (mlxTemperatures[i] > max_temp) max_temp = mlxTemperatures[i];
+            avg_temp += mlxTemperatures[i];
+        }
+        avg_temp /= 768.0f;
+
+        /* Output data via RTT (using integer formatting for float) */
+        int avg_int = (int)avg_temp;
+        int avg_dec = ((int)(avg_temp * 100) % 100);
+        if (avg_dec < 0) avg_dec = -avg_dec;
+
+        int min_int = (int)min_temp;
+        int min_dec = ((int)(min_temp * 100) % 100);
+        if (min_dec < 0) min_dec = -min_dec;
+
+        int max_int = (int)max_temp;
+        int max_dec = ((int)(max_temp * 100) % 100);
+        if (max_dec < 0) max_dec = -max_dec;
+
+        int ta_int = (int)ta;
+        int ta_dec = ((int)(ta * 100) % 100);
+        if (ta_dec < 0) ta_dec = -ta_dec;
+
+        int vdd_int = (int)vdd;
+        int vdd_dec = ((int)(vdd * 100) % 100);
+        if (vdd_dec < 0) vdd_dec = -vdd_dec;
+
+        int ctr_int = (int)center_temp;
+        int ctr_dec = ((int)(center_temp * 100) % 100);
+        if (ctr_dec < 0) ctr_dec = -ctr_dec;
+
+        SEGGER_RTT_printf(0, "%lu,%d.%02d,%d.%02d,%d.%02d,%d.%02d,%d.%02d,%d.%02d\r\n",
+                          elapsed,
+                          avg_int, avg_dec,
+                          min_int, min_dec,
+                          max_int, max_dec,
+                          ta_int, ta_dec,
+                          vdd_int, vdd_dec,
+                          ctr_int, ctr_dec);
+
+        sample_count++;
+
+        /* Brief delay before next sample */
+        HAL_Delay(100);
+    }
+
+    SEGGER_RTT_printf(0, "\r\n");
+    SEGGER_RTT_printf(0, "========================================\r\n");
+    SEGGER_RTT_printf(0, "Measurement complete (%d samples)\r\n", sample_count);
+    SEGGER_RTT_printf(0, "Total time: %lu ms\r\n", HAL_GetTick() - start_time);
+    SEGGER_RTT_printf(0, "========================================\r\n");
+}
+
+/*============================================================================*/
 /* Error Handler                                                              */
 /*============================================================================*/
 
@@ -254,6 +407,10 @@ int main(void)
 
     /* Initialize application */
     App_Init();
+
+    /* === MLX90640 STABILIZATION TIME MEASUREMENT === */
+    /* Measure how long MLX90640 takes to stabilize after boot */
+    DBG_MeasureMLX90640_StabilizationTime();
 
     /* === DEBUG TEST MODE === */
     /* I2C device scan */
