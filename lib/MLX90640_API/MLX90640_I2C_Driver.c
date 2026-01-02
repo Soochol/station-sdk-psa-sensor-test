@@ -11,7 +11,7 @@
 /* Private Defines                                                            */
 /*============================================================================*/
 
-#define MLX90640_I2C_TIMEOUT    100     /* ms */
+#define MLX90640_I2C_TIMEOUT    500     /* ms - increased for large EEPROM reads */
 
 /*============================================================================*/
 /* Public Functions                                                           */

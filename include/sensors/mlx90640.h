@@ -1,9 +1,9 @@
 /**
  * @file mlx90640.h
- * @brief MLX90640 IR thermal camera sensor driver
+ * @brief MLX90640 IR thermal array sensor driver
  *
  * Hardware Configuration:
- *   - I2C4 (PB8: SCL, PB9: SDA)
+ *   - I2C1 (PB6: SCL, PB7: SDA)
  *   - I2C Address: 0x33 (7-bit)
  *   - Resolution: 32x24 pixels
  */

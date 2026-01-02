@@ -20,7 +20,8 @@
 #define MLX90640_STATUS_REG     0x8000
 #define MLX90640_CTRL_REG       0x800D
 
-#define POW2(x) ((float)(1 << (x)))
+#define POW2(x) (powf(2.0f, (float)(x)))  /* Use powf to handle any exponent value */
+#define SCALEALPHA 0.000001f
 
 /*============================================================================*/
 /* Private Function Prototypes                                                */
@@ -320,8 +321,14 @@ void MLX90640_CalculateTo(uint16_t *frameData, const paramsMLX90640 *params,
             irData = irData - params->tgc * irDataCP[subPage];
             irData = irData / emissivity;
             
-            alphaCompensated = (params->alpha[pixelNumber] - params->tgc * params->cpAlpha[subPage]) * (1 + params->KsTa * (ta - 25));
-            alphaCompensated = alphaCompensated / alphaScale;
+            /* CRITICAL: Correct alphaCompensated calculation (from Melexis reference) */
+            if (params->alpha[pixelNumber] == 0) {
+                result[pixelNumber] = 0.0f;  /* Skip broken pixel */
+                continue;
+            }
+            alphaCompensated = SCALEALPHA * alphaScale / params->alpha[pixelNumber];
+            alphaCompensated = alphaCompensated * (1 + params->KsTa * (ta - 25));
+            alphaCompensated = alphaCompensated - params->tgc * params->cpAlpha[subPage];
             
             Sx = alphaCompensated * alphaCompensated * alphaCompensated * (irData + alphaCompensated * taTr);
             Sx = sqrtf(sqrtf(Sx)) * params->ksTo[1];
@@ -615,9 +622,14 @@ static void ExtractAlphaParameters(uint16_t *eeData, paramsMLX90640 *params)
             temp = alphaTemp[i];
         }
     }
-    
+
+    /* Guard against infinite loop: temp must be positive */
+    if (temp <= 0.0f) {
+        temp = 1.0f;  /* Prevent divide-by-zero and infinite loop */
+    }
+
     alphaScale = 0;
-    while (temp < 32767.4f) {
+    while (temp < 32767.4f && alphaScale < 32) {  /* Max 32 iterations */
         temp *= 2;
         alphaScale++;
     }

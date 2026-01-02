@@ -26,6 +26,17 @@ extern "C" {
  */
 extern const SensorDriver_t VL53L0X_Driver;
 
+/**
+ * @brief Simple test function for debugging
+ */
+void VL53L0X_SimpleTest(void);
+
+/**
+ * @brief Direct init function for debugging
+ * @return HAL_OK on success, HAL_ERROR on failure
+ */
+HAL_StatusTypeDef VL53L0X_DirectInit(void);
+
 #ifdef __cplusplus
 }
 #endif

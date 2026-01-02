@@ -23,10 +23,8 @@ extern "C" {
 
 typedef enum {
     SENSOR_ID_NONE          = 0x00,
-    SENSOR_ID_MLX90640      = 0x01,     /* IR Thermal Camera */
-    SENSOR_ID_VL53L0X       = 0x02,     /* ToF Distance Sensor */
-    /* Future sensors can be added here */
-    /* SENSOR_ID_BME280     = 0x03, */
+    SENSOR_ID_VL53L0X       = 0x01,     /* ToF Distance Sensor */
+    SENSOR_ID_MLX90640      = 0x02,     /* IR Thermal Array Sensor */
     SENSOR_ID_MAX           = 0x03,
 } SensorID_t;
 
@@ -50,25 +48,27 @@ typedef enum {
 
 /**
  * @brief Sensor specification union
- * 
+ *
  * Contains target values and tolerances for each sensor type.
  * The raw[] array provides byte-level access for serialization.
  */
 typedef union {
-    /* MLX90640 Specification */
-    struct {
-        int16_t     target_temp;    /* Target temperature ×100 °C (-40.00 ~ 300.00) */
-        uint16_t    tolerance;      /* Tolerance ×100 °C */
-    } mlx90640;
-
     /* VL53L0X Specification */
     struct {
         uint16_t    target_dist;    /* Target distance in mm (30 ~ 2000) */
         uint16_t    tolerance;      /* Tolerance in mm */
     } vl53l0x;
 
+    /* MLX90640 Specification */
+    struct {
+        int16_t     target_temp;    /* Target temperature in 0.1°C units (e.g., 250 = 25.0°C) */
+        int16_t     tolerance;      /* Tolerance in 0.1°C units */
+        uint8_t     pixel_x;        /* Target pixel X (0-31) or 0xFF for average */
+        uint8_t     pixel_y;        /* Target pixel Y (0-23) or 0xFF for average */
+    } mlx90640;
+
     /* Raw bytes for serialization */
-    uint8_t raw[4];
+    uint8_t raw[8];
 } SensorSpec_t;
 
 /*============================================================================*/
@@ -77,19 +77,11 @@ typedef union {
 
 /**
  * @brief Sensor result union
- * 
+ *
  * Contains measured values and comparison data for each sensor type.
  * The raw[] array provides byte-level access for serialization.
  */
 typedef union {
-    /* MLX90640 Result */
-    struct {
-        int16_t     max_temp;       /* Measured max pixel temperature ×100 °C */
-        int16_t     target;         /* Spec target temperature ×100 °C */
-        uint16_t    tolerance;      /* Spec tolerance ×100 °C */
-        uint16_t    diff;           /* |max_temp - target| ×100 °C */
-    } mlx90640;
-
     /* VL53L0X Result */
     struct {
         uint16_t    measured;       /* Measured distance in mm */
@@ -98,8 +90,19 @@ typedef union {
         uint16_t    diff;           /* |measured - target| in mm */
     } vl53l0x;
 
+    /* MLX90640 Result */
+    struct {
+        int16_t     measured;       /* Measured temperature in 0.1°C units */
+        int16_t     target;         /* Spec target temperature in 0.1°C units */
+        int16_t     tolerance;      /* Spec tolerance in 0.1°C units */
+        int16_t     diff;           /* |measured - target| in 0.1°C units */
+        int16_t     ambient;        /* Ambient temperature in 0.1°C units */
+        int16_t     min_temp;       /* Min pixel temperature in 0.1°C units */
+        int16_t     max_temp;       /* Max pixel temperature in 0.1°C units */
+    } mlx90640;
+
     /* Raw bytes for serialization */
-    uint8_t raw[8];
+    uint8_t raw[16];
 } SensorResult_t;
 
 #ifdef __cplusplus

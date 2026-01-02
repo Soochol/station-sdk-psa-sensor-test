@@ -1,16 +1,14 @@
 /**
  * @file main.cpp
- * @brief PSA Sensor Test Firmware - Main Application Entry Point
+ * @brief PSA Sensor Test Firmware - VL53L0X ToF Sensor Test
  *
- * This is the main application file that replaces the CubeMX-generated main.c.
- * It initializes all system components and runs the main application loop.
+ * Simplified firmware for testing VL53L0X ToF sensor only.
  *
  * Hardware Configuration:
  *   - MCU: STM32H723VGT6 @ 384MHz
  *   - I2C1: VL53L0X ToF sensor (PB6: SCL, PB7: SDA)
- *   - I2C4: MLX90640 IR sensor (PB8: SCL, PB9: SDA)
  *   - UART4: Host communication (115200 bps)
- *   - IWDG: Independent Watchdog (timeout ~2 seconds)
+ *   - IWDG: Independent Watchdog (timeout ~10 seconds)
  */
 
 extern "C" {
@@ -20,16 +18,21 @@ extern "C" {
 #include "hal/uart_handler.h"
 #include "protocol/protocol.h"
 #include "sensors/sensor_manager.h"
+#include "sensors/vl53l0x.h"
 #include "test/test_runner.h"
 }
+
+#include <stdio.h>
+#include <string.h>
+
+/* RTT for debug output via SWD */
+#include "SEGGER_RTT.h"
 
 /*============================================================================*/
 /* Global Variables (used by HAL MSP and IT)                                  */
 /*============================================================================*/
 
 I2C_HandleTypeDef hi2c1;
-I2C_HandleTypeDef hi2c2;
-I2C_HandleTypeDef hi2c3;
 I2C_HandleTypeDef hi2c4;
 UART_HandleTypeDef huart4;
 
@@ -64,75 +67,35 @@ extern "C" void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 }
 
 /*============================================================================*/
-/* Debug Test Functions (call from debugger)                                  */
+/* Debug Variables                                                            */
 /*============================================================================*/
 
-/* Debug results - check these in Watch window after calling test functions */
 volatile int dbg_i2c1_ready = -1;      /* 0=OK, 1=ERROR */
-volatile int dbg_i2c4_ready = -1;      /* 0=OK, 1=ERROR */
 volatile int dbg_vl53l0x_init = -1;    /* 0=OK, 1=ERROR */
-volatile int dbg_mlx90640_init = -1;   /* 0=OK, 1=ERROR */
 volatile uint16_t dbg_vl53l0x_dist = 0;  /* Distance in mm */
-volatile int16_t dbg_mlx90640_temp = 0;  /* Max temp x100 (2500 = 25.00C) */
+volatile int dbg_vl53l0x_step = 0;     /* VL53L0X init step (for debugging) */
+volatile int dbg_test_status = -1;      /* Last test status */
+volatile int dbg_measure_count = 0;     /* Measurement count */
 
-/* I2C scan results - found device addresses (7-bit) */
-volatile uint8_t dbg_i2c1_devices[8] = {0};  /* Found addresses on I2C1 */
-volatile uint8_t dbg_i2c2_devices[8] = {0};  /* Found addresses on I2C2 */
-volatile uint8_t dbg_i2c3_devices[8] = {0};  /* Found addresses on I2C3 */
-volatile uint8_t dbg_i2c4_devices[8] = {0};  /* Found addresses on I2C4 */
-volatile int dbg_i2c1_count = 0;             /* Number of devices found on I2C1 */
-volatile int dbg_i2c2_count = 0;             /* Number of devices found on I2C2 */
-volatile int dbg_i2c3_count = 0;             /* Number of devices found on I2C3 */
-volatile int dbg_i2c4_count = 0;             /* Number of devices found on I2C4 */
+/* I2C scan results */
+volatile uint8_t dbg_i2c1_devices[8] = {0};
+volatile int dbg_i2c1_count = 0;
 
-/**
- * @brief Initialize I2C2 and I2C3 for scanning
- */
-static void MX_I2C2_Init(void)
-{
-    hi2c2.Instance = I2C2;
-    hi2c2.Init.Timing = 0x009032AE;
-    hi2c2.Init.OwnAddress1 = 0;
-    hi2c2.Init.AddressingMode = I2C_ADDRESSINGMODE_7BIT;
-    hi2c2.Init.DualAddressMode = I2C_DUALADDRESS_DISABLE;
-    hi2c2.Init.OwnAddress2 = 0;
-    hi2c2.Init.OwnAddress2Masks = I2C_OA2_NOMASK;
-    hi2c2.Init.GeneralCallMode = I2C_GENERALCALL_DISABLE;
-    hi2c2.Init.NoStretchMode = I2C_NOSTRETCH_DISABLE;
-    HAL_I2C_Init(&hi2c2);
-}
+/* Driver debug */
+volatile uint32_t dbg_driver_ptr = 0;       /* Driver pointer address */
+volatile uint32_t dbg_init_func_ptr = 0;    /* Init function pointer */
+volatile int dbg_sensor_count = 0;          /* Registered sensor count */
 
-static void MX_I2C3_Init(void)
-{
-    hi2c3.Instance = I2C3;
-    hi2c3.Init.Timing = 0x009032AE;
-    hi2c3.Init.OwnAddress1 = 0;
-    hi2c3.Init.AddressingMode = I2C_ADDRESSINGMODE_7BIT;
-    hi2c3.Init.DualAddressMode = I2C_DUALADDRESS_DISABLE;
-    hi2c3.Init.OwnAddress2 = 0;
-    hi2c3.Init.OwnAddress2Masks = I2C_OA2_NOMASK;
-    hi2c3.Init.GeneralCallMode = I2C_GENERALCALL_DISABLE;
-    hi2c3.Init.NoStretchMode = I2C_NOSTRETCH_DISABLE;
-    HAL_I2C_Init(&hi2c3);
-}
+/*============================================================================*/
+/* Debug Test Functions                                                       */
+/*============================================================================*/
 
 /**
- * @brief Scan all I2C buses for devices (call from debugger)
- *
- * Results: dbg_i2cX_devices[], dbg_i2cX_count for X=1,2,3,4
+ * @brief Scan I2C1 bus for devices
  */
 extern "C" void DBG_ScanI2C(void)
 {
     dbg_i2c1_count = 0;
-    dbg_i2c2_count = 0;
-    dbg_i2c3_count = 0;
-    dbg_i2c4_count = 0;
-
-    /* Initialize I2C2 and I2C3 for scanning */
-    __HAL_RCC_I2C2_CLK_ENABLE();
-    __HAL_RCC_I2C3_CLK_ENABLE();
-    MX_I2C2_Init();
-    MX_I2C3_Init();
 
     /* Scan I2C1 (addresses 0x08 to 0x77) */
     for (uint8_t addr = 0x08; addr < 0x78; addr++) {
@@ -142,61 +105,83 @@ extern "C" void DBG_ScanI2C(void)
             }
         }
     }
-
-    /* Scan I2C2 (addresses 0x08 to 0x77) */
-    for (uint8_t addr = 0x08; addr < 0x78; addr++) {
-        if (HAL_I2C_IsDeviceReady(&hi2c2, (uint16_t)(addr << 1), 1, 10) == HAL_OK) {
-            if (dbg_i2c2_count < 8) {
-                dbg_i2c2_devices[dbg_i2c2_count++] = addr;
-            }
-        }
-    }
-
-    /* Scan I2C3 (addresses 0x08 to 0x77) */
-    for (uint8_t addr = 0x08; addr < 0x78; addr++) {
-        if (HAL_I2C_IsDeviceReady(&hi2c3, (uint16_t)(addr << 1), 1, 10) == HAL_OK) {
-            if (dbg_i2c3_count < 8) {
-                dbg_i2c3_devices[dbg_i2c3_count++] = addr;
-            }
-        }
-    }
-
-    /* Scan I2C4 (addresses 0x08 to 0x77) */
-    for (uint8_t addr = 0x08; addr < 0x78; addr++) {
-        if (HAL_I2C_IsDeviceReady(&hi2c4, (uint16_t)(addr << 1), 1, 10) == HAL_OK) {
-            if (dbg_i2c4_count < 8) {
-                dbg_i2c4_devices[dbg_i2c4_count++] = addr;
-            }
-        }
-    }
 }
 
 /**
- * @brief Test I2C device presence (call from debugger)
- *
- * Results stored in dbg_i2c1_ready and dbg_i2c4_ready
- * 0 = Device found, 1 = Device not found
+ * @brief Test VL53L0X device presence
  */
 extern "C" void DBG_TestI2C(void)
 {
-    dbg_i2c1_ready = (I2C_Handler_IsDeviceReady(I2C_BUS_1, 0x29, 100) == HAL_OK) ? 0 : 1;
-    dbg_i2c4_ready = (I2C_Handler_IsDeviceReady(I2C_BUS_4, 0x33, 100) == HAL_OK) ? 0 : 1;
+    dbg_i2c1_ready = (I2C_Handler_IsDeviceReady(I2C_BUS_1, VL53L0X_I2C_ADDR, 100) == HAL_OK) ? 0 : 1;
 }
 
 /**
- * @brief Initialize and test VL53L0X sensor (call from debugger)
- *
- * Results: dbg_vl53l0x_init (0=OK), dbg_vl53l0x_dist (distance in mm)
+ * @brief Continuous measurement for watch window debugging
+ * Tests all registered sensors
+ */
+extern "C" void DBG_ContinuousMeasure(void)
+{
+    uint8_t count = SensorManager_GetCount();
+
+    for (uint8_t i = 0; i < count; i++) {
+        const SensorDriver_t* driver = SensorManager_GetByIndex(i);
+        if (driver != NULL && driver->run_test != NULL) {
+            SensorResult_t result = {0};
+            TestStatus_t status = driver->run_test(&result);
+
+            if (driver->id == SENSOR_ID_VL53L0X) {
+                dbg_test_status = (int)status;
+                dbg_measure_count++;
+                if (status == STATUS_PASS || status == STATUS_FAIL_INVALID) {
+                    dbg_vl53l0x_dist = result.vl53l0x.measured;
+                }
+            }
+            /* MLX90640 results are printed via dbg_printf in the driver */
+        }
+    }
+}
+
+/**
+ * @brief Initialize and test VL53L0X sensor
  */
 extern "C" void DBG_TestVL53L0X(void)
 {
+    dbg_vl53l0x_step = -99;  /* Entry marker */
+
+    /* Get sensor count first */
+    dbg_sensor_count = SensorManager_GetCount();
+
     const SensorDriver_t* driver = SensorManager_GetByID(SENSOR_ID_VL53L0X);
     if (driver == NULL) {
         dbg_vl53l0x_init = -2;
+        dbg_vl53l0x_step = -98;  /* Driver not found */
         return;
     }
 
-    dbg_vl53l0x_init = (driver->init() == HAL_OK) ? 0 : 1;
+    /* Capture driver pointer info for debugging */
+    dbg_driver_ptr = (uint32_t)driver;
+    dbg_init_func_ptr = (uint32_t)(driver->init);
+
+    /* Check if init function pointer is valid */
+    if (driver->init == NULL) {
+        dbg_vl53l0x_init = -3;
+        dbg_vl53l0x_step = -95;  /* Init function is NULL */
+        return;
+    }
+
+    /* Test simple function call first */
+    dbg_vl53l0x_step = -98;  /* Before simple test */
+    VL53L0X_SimpleTest();    /* Should set dbg_vl53l0x_step = 1 */
+    dbg_vl53l0x_step = -97;  /* Before init() call */
+
+    /* Use direct function call instead of function pointer for debugging */
+    HAL_StatusTypeDef result = VL53L0X_DirectInit();
+    /* Don't overwrite step on failure - preserve error step */
+    if (result == HAL_OK) {
+        dbg_vl53l0x_step = -96;  /* After init() call - success marker */
+    }
+    /* else: keep the step value from VL53L0X_Init_Driver for debugging */
+    dbg_vl53l0x_init = (result == HAL_OK) ? 0 : 1;
 
     if (dbg_vl53l0x_init == 0) {
         /* Set a default spec and run test */
@@ -205,37 +190,9 @@ extern "C" void DBG_TestVL53L0X(void)
         spec.vl53l0x.tolerance = 2000;
         driver->set_spec(&spec);
 
-        SensorResult_t result;
-        driver->run_test(&result);
-        dbg_vl53l0x_dist = result.vl53l0x.measured;
-    }
-}
-
-/**
- * @brief Initialize and test MLX90640 sensor (call from debugger)
- *
- * Results: dbg_mlx90640_init (0=OK), dbg_mlx90640_temp (temp x100)
- */
-extern "C" void DBG_TestMLX90640(void)
-{
-    const SensorDriver_t* driver = SensorManager_GetByID(SENSOR_ID_MLX90640);
-    if (driver == NULL) {
-        dbg_mlx90640_init = -2;
-        return;
-    }
-
-    dbg_mlx90640_init = (driver->init() == HAL_OK) ? 0 : 1;
-
-    if (dbg_mlx90640_init == 0) {
-        /* Set a default spec and run test */
-        SensorSpec_t spec;
-        spec.mlx90640.target_temp = 2500;  /* 25.00C */
-        spec.mlx90640.tolerance = 5000;    /* +/- 50C */
-        driver->set_spec(&spec);
-
-        SensorResult_t result;
-        driver->run_test(&result);
-        dbg_mlx90640_temp = result.mlx90640.max_temp;
+        SensorResult_t result_data;
+        driver->run_test(&result_data);
+        dbg_vl53l0x_dist = result_data.vl53l0x.measured;
     }
 }
 
@@ -259,49 +216,75 @@ int main(void)
 {
     /* MPU Configuration */
     MPU_Config();
-    
+
     /* MCU Configuration */
     HAL_Init();
-    
+
+    /* Initialize RTT for debug output */
+    SEGGER_RTT_Init();
+    SEGGER_RTT_printf(0, "\r\n\r\n=== RTT Debug Output Started ===\r\n");
+    SEGGER_RTT_printf(0, "PSA Sensor Test Firmware v1.0\r\n");
+    SEGGER_RTT_printf(0, "MCU: STM32H723VGT6 @ 384MHz\r\n\r\n");
+
     /* Configure the system clock */
     SystemClock_Config();
-    
+
     /* Initialize all configured peripherals */
-    MX_GPIO_Init();
+    MX_GPIO_Init();  /* Note: 12V OFF, 2s delay, XSHUT LOW at this point */
+
+    /* Initialize I2C buses first (before powering sensors) */
     MX_I2C1_Init();
     MX_I2C4_Init();
+
+    /* === Power-up sequence (matches psa-stm32-firmware) === */
+    /* Step 1: Enable 12V power rail */
+    HAL_GPIO_WritePin(DO_12VA_EN_GPIO_Port, DO_12VA_EN_Pin, GPIO_PIN_SET);  /* 12V ON */
+    HAL_Delay(100);  /* Wait 100ms for 12V to stabilize */
+
+    /* Step 2: Release VL53L0X from reset (XSHUT HIGH) */
+    HAL_GPIO_WritePin(DO_TOF1_SHUT_GPIO_Port, DO_TOF1_SHUT_Pin, GPIO_PIN_SET);  /* XSHUT HIGH - boot sensor */
+    HAL_Delay(100);  /* Wait 100ms for VL53L0X to boot (needs ~1.2ms, use 100ms for safety) */
+
+    /* Initialize UART for communication */
     MX_UART4_Init();
+
+    /* Early startup banner - test UART output */
+    const char* banner = "\r\n\r\n=== PSA Sensor Test v1.0 ===\r\n";
+    HAL_UART_Transmit(&huart4, (uint8_t*)banner, strlen(banner), 100);
 
     /* Initialize application */
     App_Init();
 
     /* === DEBUG TEST MODE === */
-    /* Scan I2C buses first to find all devices */
+    /* I2C device scan */
     DBG_ScanI2C();
 
-    /* Run sensor tests */
+    /* Test VL53L0X presence */
     DBG_TestI2C();
-    DBG_TestVL53L0X();
-    DBG_TestMLX90640();
 
-    /* Halt here - check dbg_* variables in Watch window */
+    /* Test VL53L0X sensor */
+    DBG_TestVL53L0X();
+
+    /* If VL53L0X initialized successfully, continue to main loop */
+    if (dbg_vl53l0x_init == 0) {
+#if WATCHDOG_ENABLED
+        MX_IWDG_Init();
+#endif
+
+        /* Main application loop - continuous measurement for debugging */
+        while (1) {
+#if WATCHDOG_ENABLED
+            HAL_IWDG_Refresh(&hiwdg);  /* Feed watchdog */
+#endif
+            /* Process protocol and run async tests */
+            App_MainLoop();
+        }
+    }
+
+    /* If init failed, halt here for debugging */
     while (1) {
         __NOP();  /* Set breakpoint here to check results */
     }
-    /* === END DEBUG TEST MODE === */
-
-#if 0  /* Disabled for debugging */
-    /* Initialize watchdog (after all other init to avoid reset during boot) */
-#if WATCHDOG_ENABLED
-    MX_IWDG_Init();
-#endif
-
-    /* Main application loop */
-    while (1)
-    {
-        App_MainLoop();
-    }
-#endif
 }
 
 /*============================================================================*/
@@ -313,36 +296,91 @@ int main(void)
  */
 static void App_Init(void)
 {
-    /* Initialize I2C handlers */
+    /* Initialize I2C handler */
     I2C_Handler_Init(I2C_BUS_1, &hi2c1);
     I2C_Handler_Init(I2C_BUS_4, &hi2c4);
-    
+
     /* Initialize UART handler */
     UART_Handler_Init(&huart4);
-    
-    /* Initialize sensor manager (registers all sensor drivers) */
+
+    /* Initialize sensor manager (registers VL53L0X, MLX90640 drivers) */
     SensorManager_Init();
-    
+
+    /* Debug: show registered sensors */
+    {
+        char buf[64];
+        uint8_t count = SensorManager_GetCount();
+        snprintf(buf, sizeof(buf), "\r\n[App] Registered sensors: %d\r\n", count);
+        HAL_UART_Transmit(&huart4, (uint8_t*)buf, strlen(buf), 100);
+
+        for (uint8_t i = 0; i < count; i++) {
+            const SensorDriver_t* drv = SensorManager_GetByIndex(i);
+            if (drv) {
+                snprintf(buf, sizeof(buf), "[App] Sensor[%d]: id=%d, name=%s\r\n", i, drv->id, drv->name);
+                HAL_UART_Transmit(&huart4, (uint8_t*)buf, strlen(buf), 100);
+            }
+        }
+    }
+
+    /* Initialize all registered sensors */
+    SensorManager_InitSensors();
+
+    /* Set default specs for testing */
+    {
+        /* VL53L0X: target 500mm, tolerance 2000mm */
+        const SensorDriver_t* vl53l0x = SensorManager_GetByID(SENSOR_ID_VL53L0X);
+        if (vl53l0x) {
+            SensorSpec_t spec;
+            spec.vl53l0x.target_dist = 500;
+            spec.vl53l0x.tolerance = 2000;
+            vl53l0x->set_spec(&spec);
+            HAL_UART_Transmit(&huart4, (uint8_t*)"[App] VL53L0X spec set\r\n", 24, 100);
+        }
+
+        /* MLX90640: target 25.0°C, tolerance 50.0°C, use average */
+        const SensorDriver_t* mlx90640 = SensorManager_GetByID(SENSOR_ID_MLX90640);
+        if (mlx90640) {
+            SensorSpec_t spec;
+            spec.mlx90640.target_temp = 250;   /* 25.0°C */
+            spec.mlx90640.tolerance = 500;     /* 50.0°C */
+            spec.mlx90640.pixel_x = 0xFF;      /* Use average */
+            spec.mlx90640.pixel_y = 0xFF;
+            mlx90640->set_spec(&spec);
+            HAL_UART_Transmit(&huart4, (uint8_t*)"[App] MLX90640 spec set\r\n", 25, 100);
+        } else {
+            HAL_UART_Transmit(&huart4, (uint8_t*)"[App] MLX90640 NOT FOUND!\r\n", 27, 100);
+        }
+    }
+
     /* Initialize test runner */
     TestRunner_Init();
-    
+
     /* Initialize protocol handler */
     Protocol_Init();
 }
 
 /**
  * @brief Main application loop
- *
- * Processes incoming protocol messages, handles async sensor testing,
- * and refreshes the watchdog timer.
  */
 static void App_MainLoop(void)
 {
+    static uint32_t last_rtt_tick = 0;
+
     /* Process protocol communications */
     Protocol_Process();
 
     /* Process async test execution (non-blocking) */
     TestRunner_ProcessAsync();
+
+    /* RTT debug output every 1 second */
+    uint32_t now = HAL_GetTick();
+    if (now - last_rtt_tick >= 1000) {
+        last_rtt_tick = now;
+
+        /* Print sensor status via RTT */
+        SEGGER_RTT_printf(0, "[%lu ms] VL53L0X: %d mm (status=%d, count=%d)\r\n",
+                          now, dbg_vl53l0x_dist, dbg_test_status, dbg_measure_count);
+    }
 
     /* Refresh watchdog timer */
 #if WATCHDOG_ENABLED
@@ -351,7 +389,7 @@ static void App_MainLoop(void)
 }
 
 /*============================================================================*/
-/* CubeMX Generated Functions (copied from Core/Src/main.c)                   */
+/* Peripheral Initialization Functions                                        */
 /*============================================================================*/
 
 /**
@@ -393,19 +431,22 @@ static void SystemClock_Config(void)
     RCC_ClkInitStruct.APB1CLKDivider = RCC_APB1_DIV2;
     RCC_ClkInitStruct.APB2CLKDivider = RCC_APB2_DIV2;
     RCC_ClkInitStruct.APB4CLKDivider = RCC_APB4_DIV2;
-
     if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_2) != HAL_OK) {
         Error_Handler();
     }
+
+    /* I2C1 uses default APB1 PCLK (96MHz) as clock source
+     * With timing 0x009032AE, this gives ~425kHz I2C speed
+     * Same configuration as psa-stm32-firmware */
 }
 
 /**
- * @brief I2C1 Initialization Function
+ * @brief I2C1 Initialization Function (VL53L0X)
  */
 static void MX_I2C1_Init(void)
 {
     hi2c1.Instance = I2C1;
-    hi2c1.Init.Timing = 0x009032AE;  /* ~400kHz (Fast Mode) - from working code */
+    hi2c1.Init.Timing = 0x009032AE;  /* ~400kHz (Fast Mode) */
     hi2c1.Init.OwnAddress1 = 0;
     hi2c1.Init.AddressingMode = I2C_ADDRESSINGMODE_7BIT;
     hi2c1.Init.DualAddressMode = I2C_DUALADDRESS_DISABLE;
@@ -425,12 +466,12 @@ static void MX_I2C1_Init(void)
 }
 
 /**
- * @brief I2C4 Initialization Function
+ * @brief I2C4 Initialization Function (MLX90640)
  */
 static void MX_I2C4_Init(void)
 {
     hi2c4.Instance = I2C4;
-    hi2c4.Init.Timing = 0x009032AE;  /* ~400kHz (Fast Mode) */
+    hi2c4.Init.Timing = 0x20C71027;  /* 400kHz Fast Mode */
     hi2c4.Init.OwnAddress1 = 0;
     hi2c4.Init.AddressingMode = I2C_ADDRESSINGMODE_7BIT;
     hi2c4.Init.DualAddressMode = I2C_DUALADDRESS_DISABLE;
@@ -484,27 +525,53 @@ static void MX_UART4_Init(void)
  */
 static void MX_GPIO_Init(void)
 {
+    GPIO_InitTypeDef GPIO_InitStruct = {0};
+
     /* GPIO Ports Clock Enable */
     __HAL_RCC_GPIOH_CLK_ENABLE();
     __HAL_RCC_GPIOA_CLK_ENABLE();
     __HAL_RCC_GPIOB_CLK_ENABLE();
+    __HAL_RCC_GPIOC_CLK_ENABLE();
+
+    /* Configure 12V Power Enable (DO_12VA_EN) as output - PC13 */
+    HAL_GPIO_WritePin(DO_12VA_EN_GPIO_Port, DO_12VA_EN_Pin, GPIO_PIN_RESET);  /* Start with 12V OFF */
+    GPIO_InitStruct.Pin = DO_12VA_EN_Pin;
+    GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+    GPIO_InitStruct.Pull = GPIO_NOPULL;
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+    HAL_GPIO_Init(DO_12VA_EN_GPIO_Port, &GPIO_InitStruct);
+
+    /* Keep 12V OFF and wait 2 seconds (discharge capacitors, ensure clean power-up) */
+    HAL_GPIO_WritePin(DO_12VA_EN_GPIO_Port, DO_12VA_EN_Pin, GPIO_PIN_RESET);
+    HAL_Delay(2000);  /* 2 second delay with 12V OFF */
+
+    /* Configure VL53L0X XSHUT (DO_TOF1_SHUT) as output - keep LOW until 12V is stable */
+    HAL_GPIO_WritePin(DO_TOF1_SHUT_GPIO_Port, DO_TOF1_SHUT_Pin, GPIO_PIN_RESET);  /* XSHUT LOW - hold in reset */
+    GPIO_InitStruct.Pin = DO_TOF1_SHUT_Pin;
+    GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+    GPIO_InitStruct.Pull = GPIO_NOPULL;
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+    HAL_GPIO_Init(DO_TOF1_SHUT_GPIO_Port, &GPIO_InitStruct);
+
+    /* Configure VL53L0X GPIO1 (DO_TOF1_GPIO) as input for interrupt */
+    GPIO_InitStruct.Pin = DO_TOF1_GPIO_Pin;
+    GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+    GPIO_InitStruct.Pull = GPIO_NOPULL;
+    HAL_GPIO_Init(DO_TOF1_GPIO_GPIO_Port, &GPIO_InitStruct);
+
+    /* NOTE: XSHUT release and 12V enable happen in main() after I2C init */
 }
 
 #if WATCHDOG_ENABLED
 /**
  * @brief IWDG Initialization Function
- *
- * Configures Independent Watchdog with ~10 second timeout.
- * LSI clock is approximately 32kHz on STM32H7.
- * Timeout = (Prescaler * Reload) / LSI_freq
- *         = (256 * 1250) / 32000 = 10 seconds
  */
 static void MX_IWDG_Init(void)
 {
     hiwdg.Instance = IWDG1;
     hiwdg.Init.Prescaler = IWDG_PRESCALER_256;
     hiwdg.Init.Window = 4095;
-    hiwdg.Init.Reload = 1250;  /* ~10 second timeout at 32kHz LSI with /256 prescaler */
+    hiwdg.Init.Reload = 1250;  /* ~10 second timeout */
 
     if (HAL_IWDG_Init(&hiwdg) != HAL_OK) {
         Error_Handler();

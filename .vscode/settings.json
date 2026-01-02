@@ -4,7 +4,7 @@
   "cmake.showNotAllDocumentsSavedQuestion": false,
   "cmake.enabledOutputParsers": [],
   "cmake.ignoreCMakeListsMissing": true,
-  "C_Cpp.intelliSenseEngine": "disabled",
+  "C_Cpp.intelliSenseEngine": "default",
   "extensions.ignoreRecommendations": true,
   "http.proxySupport": "on",
   "http.proxyStrictSSL": false

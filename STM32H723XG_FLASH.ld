@@ -198,6 +198,15 @@ SECTIONS
 
 
 
+  /* D3 SRAM section for BDMA buffers (I2C4 - BDMA can only access D3 domain) */
+  .my_nocache_d3 (NOLOAD) :
+  {
+    . = ALIGN(4);
+    *(.my_nocache_d3)
+    *(.my_nocache_d3*)
+    . = ALIGN(4);
+  } >RAM_D3
+
   /* Remove information from the standard libraries */
   /DISCARD/ :
   {

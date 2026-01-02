@@ -59,6 +59,11 @@ typedef struct SensorDriver {
 void SensorManager_Init(void);
 
 /**
+ * @brief Initialize all registered sensors
+ */
+void SensorManager_InitSensors(void);
+
+/**
  * @brief Register a sensor driver
  * @param driver Pointer to driver structure
  * @return HAL_OK on success, HAL_ERROR if registry is full

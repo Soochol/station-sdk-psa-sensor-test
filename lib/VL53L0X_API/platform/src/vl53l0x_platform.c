@@ -12,7 +12,7 @@
 /* Private Defines                                                            */
 /*============================================================================*/
 
-#define VL53L0X_I2C_TIMEOUT     100     /* ms */
+#define VL53L0X_I2C_TIMEOUT     500     /* ms - increased for calibration */
 
 /*============================================================================*/
 /* Public Functions                                                           */

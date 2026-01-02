@@ -10,7 +10,7 @@
 /* Private Variables                                                          */
 /*============================================================================*/
 
-static I2C_HandleTypeDef* i2c_handles[I2C_BUS_COUNT] = {NULL, NULL};
+static I2C_HandleTypeDef* i2c_handles[I2C_BUS_COUNT] = {NULL};
 
 /*============================================================================*/
 /* Public Functions                                                           */

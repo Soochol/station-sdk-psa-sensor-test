@@ -61,6 +61,24 @@ typedef uint8_t VL53L0X_DeviceModes;
 #define VL53L0X_RANGESTATUS_HW                      5
 
 /*============================================================================*/
+/* Limit Check IDs                                                            */
+/*============================================================================*/
+
+#define VL53L0X_CHECKENABLE_SIGMA_FINAL_RANGE           0
+#define VL53L0X_CHECKENABLE_SIGNAL_RATE_FINAL_RANGE     1
+#define VL53L0X_CHECKENABLE_SIGNAL_REF_CLIP             2
+#define VL53L0X_CHECKENABLE_RANGE_IGNORE_THRESHOLD      3
+#define VL53L0X_CHECKENABLE_SIGNAL_RATE_MSRC            4
+#define VL53L0X_CHECKENABLE_SIGNAL_RATE_PRE_RANGE       5
+#define VL53L0X_CHECKENABLE_NUMBER_OF_CHECKS            6
+
+/*============================================================================*/
+/* Fixed Point Types                                                          */
+/*============================================================================*/
+
+typedef uint32_t FixPoint1616_t;
+
+/*============================================================================*/
 /* Types                                                                      */
 /*============================================================================*/
 
@@ -197,6 +215,39 @@ VL53L0X_Error VL53L0X_GetRangingMeasurementData(VL53L0X_Dev_t *Dev,
  * @return Error code
  */
 VL53L0X_Error VL53L0X_ClearInterruptMask(VL53L0X_Dev_t *Dev, uint32_t InterruptMask);
+
+/**
+ * @brief Enable/Disable a specific limit check
+ * @param Dev Device handle
+ * @param LimitCheckId Limit check identifier (VL53L0X_CHECKENABLE_*)
+ * @param LimitCheckEnable 1 to enable, 0 to disable
+ * @return Error code
+ */
+VL53L0X_Error VL53L0X_SetLimitCheckEnable(VL53L0X_Dev_t *Dev,
+                                           uint16_t LimitCheckId,
+                                           uint8_t LimitCheckEnable);
+
+/**
+ * @brief Set limit check threshold value
+ * @param Dev Device handle
+ * @param LimitCheckId Limit check identifier (VL53L0X_CHECKENABLE_*)
+ * @param LimitCheckValue Threshold value in FixPoint1616 format
+ * @return Error code
+ */
+VL53L0X_Error VL53L0X_SetLimitCheckValue(VL53L0X_Dev_t *Dev,
+                                          uint16_t LimitCheckId,
+                                          FixPoint1616_t LimitCheckValue);
+
+/**
+ * @brief Get current limit check value
+ * @param Dev Device handle
+ * @param LimitCheckId Limit check identifier
+ * @param pLimitCheckValue Output: current threshold value
+ * @return Error code
+ */
+VL53L0X_Error VL53L0X_GetLimitCheckCurrent(VL53L0X_Dev_t *Dev,
+                                            uint16_t LimitCheckId,
+                                            FixPoint1616_t *pLimitCheckCurrent);
 
 #ifdef __cplusplus
 }
