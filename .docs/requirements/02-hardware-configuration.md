@@ -1,4 +1,4 @@
-# PSA Sensor Test - Hardware Configuration
+# Station SDK - PSA Sensor Test - Hardware Configuration
 
 ## 1. MCU Specification
 

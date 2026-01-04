@@ -1,4 +1,4 @@
-# PSA Sensor Test Protocol
+# Station SDK - PSA Sensor Test Protocol
 
 PSA(Preconfigured Sensor Array) 센서 테스트 펌웨어를 위한 UART 통신 프로토콜 문서입니다.
 

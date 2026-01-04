@@ -1,6 +1,6 @@
-# PSA Sensor Test - Host Tools
+# Station SDK - PSA Sensor Test - Host Tools
 
-PSA 센서 테스트 펌웨어를 위한 Python 테스트 프레임워크입니다.
+Station SDK PSA 센서 테스트 펌웨어를 위한 Python 테스트 프레임워크입니다.
 
 ## 설치
 

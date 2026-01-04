@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-PSA (Preconfigured Sensor Array) Sensor Test Firmware for STM32H723VGT6 @ 384MHz. Tests and validates sensor data via UART protocol for host PC communication. Currently implements VL53L0X ToF distance sensor with framework for MLX90640 IR thermal sensor.
+Station SDK - PSA (Preconfigured Sensor Array) Sensor Test Firmware for STM32H723VGT6 @ 384MHz. Tests and validates sensor data via UART protocol for host PC communication. Currently implements VL53L0X ToF distance sensor with framework for MLX90640 IR thermal sensor.
 
 ## Build Commands
 

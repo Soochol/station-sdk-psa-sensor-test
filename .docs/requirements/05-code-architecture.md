@@ -1,4 +1,4 @@
-# PSA Sensor Test - Code Architecture Design
+# Station SDK - PSA Sensor Test - Code Architecture Design
 
 ## 1. Overview
 

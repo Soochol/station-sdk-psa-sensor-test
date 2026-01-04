@@ -1,4 +1,4 @@
-# PSA Sensor Test - UART Protocol Specification
+# Station SDK - PSA Sensor Test - UART Protocol Specification
 
 ## 1. Overview
 

@@ -7,7 +7,16 @@
       "Bash(~/.platformio/penv/bin/pio run:*)",
       "Bash(code --list-extensions:*)",
       "Bash(wc:*)",
-      "Bash(pio device monitor:*)"
+      "Bash(pio device monitor:*)",
+      "Bash(npm -g uninstall:*)",
+      "Bash(git clone:*)",
+      "Bash(pip install:*)",
+      "Bash(/bin/ls:*)",
+      "Bash(git submodule:*)"
     ]
-  }
+  },
+  "enableAllProjectMcpServers": true,
+  "enabledMcpjsonServers": [
+    "embedded-debugger"
+  ]
 }

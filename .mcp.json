@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "embedded-debugger": {
+      "command": "/home/dev/embedded-debugger-mcp/target/release/embedded-debugger-mcp",
+      "args": [],
+      "env": {
+        "RUST_LOG": "info"
+      }
+    }
+  }
+}

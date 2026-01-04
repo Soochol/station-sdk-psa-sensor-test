@@ -1,4 +1,4 @@
-# PSA Sensor Test - Development Workflow
+# Station SDK - PSA Sensor Test - Development Workflow
 
 ## 1. Development Environment Setup
 

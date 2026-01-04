@@ -1,9 +1,9 @@
-# PSA Sensor Test - Project Structure
+# Station SDK - PSA Sensor Test - Project Structure
 
 ## 1. Directory Layout
 
 ```
-PSA-sensor-test/
+station-sdk-psa-sensor-test/
 │
 ├── docs/                           # 📚 문서
 │   ├── 01-protocol-specification.md
