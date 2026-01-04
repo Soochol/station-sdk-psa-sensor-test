@@ -1,9 +1,9 @@
-# PSA Sensor Test Sequence Manifest
+# Station SDK - PSA Sensor Test Sequence Manifest
 # VL53L0X ToF 거리 센서와 MLX90640 IR 열화상 센서 테스트
 
 name: psa_sensor_test
-version: "1.0.0"
-author: "PSA Team"
+version: "2.0.0"
+author: "Station SDK Team"
 description: |
   PSA(Preconfigured Sensor Array) 센서 테스트 시퀀스.
   STM32H723 MCU와 UART 통신하여 VL53L0X, MLX90640 센서를 테스트합니다.
@@ -12,18 +12,20 @@ description: |
 modes:
   automatic: true      # 자동 순차 실행
   manual: true         # 수동 스텝별 실행
+  cli: true            # CLI 서브프로세스 실행 (SDK v2.0)
   interactive: false
 
 # 진입점 설정
 entry_point:
   module: sequence
   class: PSASensorTestSequence
+  cli_main: main         # CLI 진입점 (main.py)
 
 # 하드웨어 정의
 hardware:
   psa_mcu:
     display_name: "PSA MCU (STM32H723)"
-    driver: psa_mcu
+    driver: drivers.psa_mcu
     class: PSAMCUDriver
     description: "STM32H723 MCU 센서 테스트 보드"
     config_schema:
@@ -115,6 +117,13 @@ hardware:
 
 # 시퀀스 파라미터
 parameters:
+  # 통신 설정
+  port:
+    display_name: "시리얼 포트"
+    type: string
+    default: "/dev/ttyUSB0"
+    description: "MCU 시리얼 포트 (예: /dev/ttyUSB0, COM3)"
+
   # VL53L0X 파라미터
   vl53l0x_target_mm:
     display_name: "VL53L0X 목표 거리"
@@ -153,12 +162,43 @@ parameters:
     unit: "C"
     description: "IR 센서 허용 오차 (섭씨)"
 
+  # 센서별 활성화 설정
+  test_vl53l0x_enabled:
+    display_name: "VL53L0X 테스트 활성화"
+    type: boolean
+    default: true
+    description: "VL53L0X ToF 센서 테스트 실행 여부"
+
+  test_mlx90640_enabled:
+    display_name: "MLX90640 테스트 활성화"
+    type: boolean
+    default: true
+    description: "MLX90640 IR 센서 테스트 실행 여부"
+
+  # 실행 제어
+  stop_on_failure:
+    display_name: "실패 시 중단"
+    type: boolean
+    default: true
+    description: "스텝 실패 시 즉시 시퀀스 중단 (false면 모든 스텝 실행)"
+
 # 스텝 정의
+# Note: setup과 teardown은 SDK에서 자동으로 추가되는 lifecycle 스텝입니다.
 steps:
+  - name: setup
+    display_name: "Setup"
+    order: 0
+    timeout: 30.0
+    estimated_duration: 3.0
+    manual:
+      skippable: false
+      auto_only: true
+
   - name: initialize
     display_name: "하드웨어 초기화"
     order: 1
     timeout: 30.0
+    estimated_duration: 5.0
     manual:
       skippable: false
       auto_only: false
@@ -170,6 +210,7 @@ steps:
     display_name: "VL53L0X 거리 테스트"
     order: 2
     timeout: 15.0
+    estimated_duration: 8.0
     retry: 1
     manual:
       skippable: true
@@ -184,6 +225,7 @@ steps:
     display_name: "MLX90640 온도 테스트"
     order: 3
     timeout: 20.0
+    estimated_duration: 12.0
     retry: 1
     manual:
       skippable: true
@@ -196,14 +238,24 @@ steps:
 
   - name: finalize
     display_name: "정리"
-    order: 99
+    order: 4
     timeout: 10.0
+    estimated_duration: 2.0
     cleanup: true
     manual:
       skippable: false
       auto_only: false
 
+  - name: teardown
+    display_name: "Teardown"
+    order: 5
+    timeout: 10.0
+    estimated_duration: 1.0
+    manual:
+      skippable: false
+      auto_only: true
+
 # Python 의존성
 dependencies:
   python:
-    - pyserial>=3.5
+    - pyserial>=3.5,<4.0

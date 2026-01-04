@@ -2,7 +2,7 @@
 PSA MCU Driver Module
 
 Driver for communicating with STM32H723 MCU via UART protocol.
-Wraps the psa_protocol package for sequence integration.
+Uses libs/psa_protocol wrapper for clean imports.
 """
 
 import asyncio
@@ -11,13 +11,16 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from .base import BaseDriver
+# Import BaseDriver - try relative import first, fallback to direct import
+try:
+    from .base import BaseDriver
+except ImportError:
+    from base import BaseDriver
 
-# Add host_tools to path for psa_protocol import
-_project_root = Path(__file__).parent.parent.parent.parent
-_host_tools_path = _project_root / "host_tools"
-if str(_host_tools_path) not in sys.path:
-    sys.path.insert(0, str(_host_tools_path))
+# Add libs folder to sys.path for psa_protocol import
+_libs_path = Path(__file__).parent.parent / "libs"
+if str(_libs_path) not in sys.path:
+    sys.path.insert(0, str(_libs_path))
 
 from psa_protocol import (
     SerialTransport,
@@ -26,11 +29,12 @@ from psa_protocol import (
     MLX90640Spec,
     SensorID,
     TestReport,
-    SensorInfo,
 )
-from psa_protocol.exceptions import NAKError, TimeoutError as PSATimeoutError
 
 logger = logging.getLogger(__name__)
+
+# MCU는 온도를 celsius * 10 형태로 전송/수신
+CELSIUS_MULTIPLIER = 10
 
 
 class PSAMCUDriver(BaseDriver):
@@ -166,7 +170,7 @@ class PSAMCUDriver(BaseDriver):
             raise RuntimeError("Not connected to MCU")
 
         sensors = await self._run_sync(self._client.get_sensor_list)
-        return [{"id": s.id, "name": s.name} for s in sensors]
+        return [{"id": s.sensor_id, "name": s.name} for s in sensors]
 
     async def set_spec_vl53l0x(self, target_mm: int, tolerance_mm: int) -> bool:
         """
@@ -189,8 +193,6 @@ class PSAMCUDriver(BaseDriver):
         self,
         target_celsius: float,
         tolerance_celsius: float,
-        pixel_x: int = 0xFF,
-        pixel_y: int = 0xFF
     ) -> bool:
         """
         Set MLX90640 test specification.
@@ -198,8 +200,6 @@ class PSAMCUDriver(BaseDriver):
         Args:
             target_celsius: Target temperature in Celsius
             tolerance_celsius: Tolerance in Celsius
-            pixel_x: Pixel X coordinate (0xFF for average)
-            pixel_y: Pixel Y coordinate (0xFF for average)
 
         Returns:
             bool: True if successful
@@ -208,10 +208,8 @@ class PSAMCUDriver(BaseDriver):
             raise RuntimeError("Not connected to MCU")
 
         spec = MLX90640Spec(
-            target_temp=int(target_celsius * 10),  # Convert to x10 format
-            tolerance=int(tolerance_celsius * 10),
-            pixel_x=pixel_x,
-            pixel_y=pixel_y
+            target_temp=int(target_celsius * CELSIUS_MULTIPLIER),
+            tolerance=int(tolerance_celsius * CELSIUS_MULTIPLIER),
         )
         return await self._run_sync(self._client.set_spec_mlx90640, spec)
 
@@ -288,8 +286,8 @@ class PSAMCUDriver(BaseDriver):
         report = await self._run_sync(self._client.test_all, timeout=30.0)
 
         return {
-            "passed": report.passed,
-            "failed": report.failed,
+            "passed": report.pass_count,
+            "failed": report.fail_count,
             "timestamp": report.timestamp,
             "results": [
                 {
@@ -308,7 +306,7 @@ class PSAMCUDriver(BaseDriver):
         """Parse TestReport into dictionary."""
         result = {
             "sensor": sensor_name,
-            "passed": report.passed > 0 and report.failed == 0,
+            "passed": report.pass_count > 0 and report.fail_count == 0,
             "timestamp": report.timestamp,
         }
 
@@ -326,10 +324,10 @@ class PSAMCUDriver(BaseDriver):
                     result["tolerance_mm"] = r.result.tolerance
                     result["diff_mm"] = r.result.diff
                 elif sensor_name == "MLX90640":
-                    result["measured_celsius"] = r.result.measured / 10.0
-                    result["target_celsius"] = r.result.target / 10.0
-                    result["tolerance_celsius"] = r.result.tolerance / 10.0
-                    result["diff_celsius"] = r.result.diff / 10.0
+                    result["measured_celsius"] = r.result.max_temp / CELSIUS_MULTIPLIER
+                    result["target_celsius"] = r.result.target / CELSIUS_MULTIPLIER
+                    result["tolerance_celsius"] = r.result.tolerance / CELSIUS_MULTIPLIER
+                    result["diff_celsius"] = r.result.diff / CELSIUS_MULTIPLIER
 
         return result
 
@@ -340,5 +338,5 @@ class PSAMCUDriver(BaseDriver):
         The psa_protocol client uses synchronous serial communication,
         so we run it in a thread pool to avoid blocking.
         """
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, lambda: func(*args, **kwargs))

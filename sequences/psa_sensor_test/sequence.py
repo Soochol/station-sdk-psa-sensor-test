@@ -1,267 +1,471 @@
 """
-PSA Sensor Test Sequence Module
+PSA Sensor Test Sequence Module (SDK 2.0)
 
 Automated test sequence for VL53L0X ToF distance sensor and
 MLX90640 IR thermal sensor via STM32H723 MCU.
+
+This module uses the SDK 2.0 SequenceBase pattern with:
+- setup(): Hardware initialization
+- run(): Step-by-step execution with emit_* helpers
+- teardown(): Resource cleanup
 """
 
 import logging
-from typing import Any, Dict, List, Optional
+import time
+from typing import Any, Dict, Optional
 
-from .drivers.psa_mcu import PSAMCUDriver
+from station_service_sdk import (
+    SequenceBase,
+    RunResult,
+    ExecutionContext,
+    SetupError,
+    HardwareError,
+)
 
 logger = logging.getLogger(__name__)
 
+# Lazy import for driver - allows metadata extraction without dependencies
+PSAMCUDriver = None
 
-class PSASensorTestSequence:
+
+def _get_driver_class():
+    """Load driver class at runtime."""
+    global PSAMCUDriver
+    if PSAMCUDriver is None:
+        try:
+            # Try relative import first (works when loaded as a package)
+            from .drivers.psa_mcu import PSAMCUDriver as _Driver
+            PSAMCUDriver = _Driver
+        except ImportError:
+            # Fallback to dynamic loading (works when run as subprocess)
+            import importlib.util
+            import sys
+            from pathlib import Path
+
+            drivers_path = Path(__file__).parent / "drivers"
+            driver_path = drivers_path / "psa_mcu.py"
+
+            if not driver_path.exists():
+                raise ImportError(f"Driver module not found: {driver_path}")
+
+            # Add drivers folder to sys.path for base import
+            if str(drivers_path) not in sys.path:
+                sys.path.insert(0, str(drivers_path))
+
+            spec = importlib.util.spec_from_file_location("psa_mcu", driver_path)
+            if spec is None or spec.loader is None:
+                raise ImportError(f"Failed to load driver module: {driver_path}")
+
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            PSAMCUDriver = module.PSAMCUDriver
+    return PSAMCUDriver
+
+
+class PSASensorTestSequence(SequenceBase):
     """
-    PSA Sensor Test Sequence.
+    PSA Sensor Test Sequence (SDK 2.0).
 
     Tests VL53L0X (ToF distance) and MLX90640 (IR thermal) sensors
     connected to STM32H723 MCU via UART protocol.
 
     Attributes:
-        name: Sequence name
-        version: Sequence version
+        name: Sequence identifier
+        version: Semantic version
+        description: Human-readable description
     """
 
-    name = "PSA Sensor Test"
-    version = "1.0.0"
+    # Class-level metadata (required by SequenceBase)
+    name = "psa_sensor_test"
+    version = "2.0.0"
+    description = "PSA 센서 테스트 시퀀스 (VL53L0X ToF, MLX90640 IR)"
 
     def __init__(
         self,
-        hardware: Optional[Dict[str, Any]] = None,
-        parameters: Optional[Dict[str, Any]] = None
+        context: ExecutionContext,
+        hardware_config: Optional[Dict[str, Dict[str, Any]]] = None,
+        parameters: Optional[Dict[str, Any]] = None,
+        **kwargs,
     ) -> None:
         """
         Initialize sequence.
 
         Args:
-            hardware: Hardware driver instances dictionary
+            context: Execution context from Station Service
+            hardware_config: Hardware configuration dictionary
             parameters: Test parameters dictionary
+            **kwargs: Additional arguments for SequenceBase
         """
-        self.hardware = hardware or {}
-        self.parameters = parameters or {}
-        self.results: List[Dict[str, Any]] = []
+        super().__init__(
+            context=context,
+            hardware_config=hardware_config,
+            parameters=parameters,
+            **kwargs,
+        )
 
-        # Get hardware driver
-        self.mcu: Optional[PSAMCUDriver] = self.hardware.get("psa_mcu")
-        if self.mcu is None:
-            # Create default driver if not provided
-            self.mcu = PSAMCUDriver(config={
-                "port": self.parameters.get("port", "/dev/ttyUSB0"),
-                "baudrate": self.parameters.get("baudrate", 115200),
-                "timeout": self.parameters.get("timeout", 5.0),
-            })
+        # MCU driver instance (initialized in setup)
+        self.mcu: Optional[Any] = None
 
         # Load parameters with defaults
-        self.vl53l0x_target_mm: int = self.parameters.get("vl53l0x_target_mm", 500)
-        self.vl53l0x_tolerance_mm: int = self.parameters.get("vl53l0x_tolerance_mm", 100)
-        self.mlx90640_target_celsius: float = self.parameters.get("mlx90640_target_celsius", 25.0)
-        self.mlx90640_tolerance_celsius: float = self.parameters.get("mlx90640_tolerance_celsius", 10.0)
+        self.port: str = self.get_parameter("port", "/dev/ttyUSB0")
+        self.baudrate: int = self.get_parameter("baudrate", 115200)
+        self.timeout: float = self.get_parameter("timeout", 5.0)
+
+        # VL53L0X parameters
+        self.vl53l0x_target_mm: int = self.get_parameter("vl53l0x_target_mm", 500)
+        self.vl53l0x_tolerance_mm: int = self.get_parameter("vl53l0x_tolerance_mm", 100)
+
+        # MLX90640 parameters
+        self.mlx90640_target_celsius: float = self.get_parameter("mlx90640_target_celsius", 25.0)
+        self.mlx90640_tolerance_celsius: float = self.get_parameter("mlx90640_tolerance_celsius", 10.0)
+
+        # Sensor enable flags
+        self.test_vl53l0x_enabled: bool = self.get_parameter("test_vl53l0x_enabled", True)
+        self.test_mlx90640_enabled: bool = self.get_parameter("test_mlx90640_enabled", True)
+
+        # Stop on first failure (default: True for manufacturing tests)
+        self.stop_on_failure: bool = self.get_parameter("stop_on_failure", True)
 
         logger.debug(f"Initialized {self.name} v{self.version}")
-        logger.debug(f"VL53L0X: target={self.vl53l0x_target_mm}mm, tolerance={self.vl53l0x_tolerance_mm}mm")
-        logger.debug(f"MLX90640: target={self.mlx90640_target_celsius}C, tolerance={self.mlx90640_tolerance_celsius}C")
 
-    # === Step Methods ===
+    # =========================================================================
+    # Lifecycle Methods (Required by SequenceBase)
+    # =========================================================================
 
-    async def initialize(self) -> Dict[str, Any]:
+    async def setup(self) -> None:
         """
         Initialize hardware and verify connection.
 
-        Step 1: Connect to MCU and verify firmware version.
+        Connects to PSA MCU and validates firmware version.
+
+        Raises:
+            SetupError: If hardware connection fails
+        """
+        self.emit_log("info", "하드웨어 초기화 시작...")
+
+        # Check if running in simulation mode (dry_run)
+        if self.context.dry_run:
+            self.emit_log("info", "시뮬레이션 모드 - 실제 하드웨어 연결 건너뜀")
+            # Use mock hardware from context
+            self.mcu = self.context.hardware.get("psa_mcu")
+            if self.mcu:
+                await self.mcu.connect()
+            return
+
+        # Real hardware connection
+        try:
+            hw_config = self.get_hardware_config("psa_mcu")
+            port = hw_config.get("port", self.port)
+            baudrate = hw_config.get("baudrate", self.baudrate)
+            timeout = hw_config.get("timeout", self.timeout)
+
+            self.emit_log("info", f"MCU 연결 중: {port} @ {baudrate} bps")
+
+            driver_class = _get_driver_class()
+            self.mcu = driver_class(config={
+                "port": port,
+                "baudrate": baudrate,
+                "timeout": timeout,
+            })
+
+            connected = await self.mcu.connect()
+            if not connected:
+                raise SetupError("MCU 연결 실패", details={"error_code": "MCU_CONNECTION_FAILED"})
+
+            # Get device info
+            idn = await self.mcu.identify()
+            self.emit_log("info", f"MCU 연결 완료: {idn}")
+
+        except SetupError:
+            raise
+        except Exception as e:
+            raise SetupError(f"하드웨어 초기화 실패: {e}", details={"original_error": str(e)})
+
+    async def run(self) -> RunResult:
+        """
+        Execute the main test sequence.
+
+        Runs all enabled sensor tests and collects measurements.
 
         Returns:
-            Dict: Initialization result
+            RunResult with passed status and measurements
         """
-        logger.info("Step 1: Initializing PSA MCU connection")
-        result: Dict[str, Any] = {
-            "step": "initialize",
-            "status": "passed",
-            "data": {},
-        }
+        # Calculate total steps
+        total_steps = 1  # initialize is always run
+        if self.test_vl53l0x_enabled:
+            total_steps += 1
+        if self.test_mlx90640_enabled:
+            total_steps += 1
+        total_steps += 1  # finalize is always run
+
+        current_step = 0
+        all_passed = True
+        measurements: Dict[str, Any] = {}
+
+        # =====================================================================
+        # Step 1: Initialize
+        # =====================================================================
+        current_step += 1
+        self.emit_step_start("initialize", current_step, total_steps, "하드웨어 초기화")
+        start_time = time.time()
 
         try:
+            self.check_abort()
+
             if self.mcu:
-                connected = await self.mcu.connect()
-                if not connected:
-                    result["status"] = "failed"
-                    result["error"] = "Failed to connect to PSA MCU"
-                    return result
-
-                # Get device info
-                idn = await self.mcu.identify()
-                result["data"]["device_idn"] = idn
-
                 # Get firmware version
-                version = await self.mcu.ping()
-                result["data"]["firmware_version"] = version
+                fw_version = await self.mcu.ping()
+                self.emit_log("info", f"펌웨어 버전: {fw_version}")
 
                 # Get sensor list
                 sensors = await self.mcu.get_sensor_list()
-                result["data"]["sensors"] = sensors
-                result["data"]["sensor_count"] = len(sensors)
+                sensor_names = [s.get("name", "Unknown") for s in sensors]
+                self.emit_log("info", f"감지된 센서: {sensor_names}")
 
-                logger.info(f"Connected: {idn}")
-                logger.info(f"Sensors: {[s['name'] for s in sensors]}")
+                measurements["firmware_version"] = fw_version
+                measurements["sensor_count"] = len(sensors)
+
+            duration = time.time() - start_time
+            self.emit_step_complete("initialize", current_step, True, duration)
 
         except Exception as e:
-            result["status"] = "failed"
-            result["error"] = str(e)
-            logger.exception(f"Initialization failed: {e}")
+            duration = time.time() - start_time
+            self.emit_step_complete("initialize", current_step, False, duration, error=str(e))
+            self.emit_error("INIT_ERROR", str(e))
+            all_passed = False
+            if self.stop_on_failure:
+                return {"passed": False, "measurements": measurements, "data": {"stopped_at": "initialize"}}
 
-        self.results.append(result)
+        # =====================================================================
+        # Step 2: VL53L0X Distance Test (if enabled)
+        # =====================================================================
+        if self.test_vl53l0x_enabled:
+            current_step += 1
+            self.emit_step_start("test_vl53l0x", current_step, total_steps, "VL53L0X 거리 테스트")
+            start_time = time.time()
+
+            try:
+                self.check_abort()
+
+                if self.mcu:
+                    result = await self.mcu.test_vl53l0x(
+                        target_mm=self.vl53l0x_target_mm,
+                        tolerance_mm=self.vl53l0x_tolerance_mm,
+                    )
+
+                    measured_mm = result.get("measured_mm", 0)
+                    passed = result.get("passed", False)
+
+                    # Emit measurement with limits
+                    self.emit_measurement(
+                        name="vl53l0x_distance",
+                        value=measured_mm,
+                        unit="mm",
+                        passed=passed,
+                        min_value=self.vl53l0x_target_mm - self.vl53l0x_tolerance_mm,
+                        max_value=self.vl53l0x_target_mm + self.vl53l0x_tolerance_mm,
+                    )
+
+                    measurements["vl53l0x_distance_mm"] = measured_mm
+                    measurements["vl53l0x_passed"] = passed
+
+                    if not passed:
+                        all_passed = False
+                        self.emit_log("warning", f"VL53L0X 테스트 실패: {result.get('status_name')}")
+
+                duration = time.time() - start_time
+                step_passed = result.get("passed", True) if self.mcu else True
+                self.emit_step_complete(
+                    "test_vl53l0x",
+                    current_step,
+                    step_passed,
+                    duration,
+                    measurements={"vl53l0x_distance": measured_mm} if self.mcu else None,
+                )
+
+                # Stop on measurement failure if configured
+                if not step_passed and self.stop_on_failure:
+                    return {"passed": False, "measurements": measurements, "data": {"stopped_at": "test_vl53l0x"}}
+
+            except Exception as e:
+                duration = time.time() - start_time
+                self.emit_step_complete("test_vl53l0x", current_step, False, duration, error=str(e))
+                self.emit_error("VL53L0X_ERROR", str(e))
+                all_passed = False
+                if self.stop_on_failure:
+                    return {"passed": False, "measurements": measurements, "data": {"stopped_at": "test_vl53l0x"}}
+
+        # =====================================================================
+        # Step 3: MLX90640 Temperature Test (if enabled)
+        # =====================================================================
+        if self.test_mlx90640_enabled:
+            current_step += 1
+            self.emit_step_start("test_mlx90640", current_step, total_steps, "MLX90640 온도 테스트")
+            start_time = time.time()
+
+            try:
+                self.check_abort()
+
+                if self.mcu:
+                    result = await self.mcu.test_mlx90640(
+                        target_celsius=self.mlx90640_target_celsius,
+                        tolerance_celsius=self.mlx90640_tolerance_celsius,
+                    )
+
+                    measured_celsius = result.get("measured_celsius", 0)
+                    passed = result.get("passed", False)
+
+                    # Emit measurement with limits
+                    self.emit_measurement(
+                        name="mlx90640_temperature",
+                        value=measured_celsius,
+                        unit="°C",
+                        passed=passed,
+                        min_value=self.mlx90640_target_celsius - self.mlx90640_tolerance_celsius,
+                        max_value=self.mlx90640_target_celsius + self.mlx90640_tolerance_celsius,
+                    )
+
+                    measurements["mlx90640_temperature_c"] = measured_celsius
+                    measurements["mlx90640_passed"] = passed
+
+                    if not passed:
+                        all_passed = False
+                        self.emit_log("warning", f"MLX90640 테스트 실패: {result.get('status_name')}")
+
+                duration = time.time() - start_time
+                step_passed = result.get("passed", True) if self.mcu else True
+                self.emit_step_complete(
+                    "test_mlx90640",
+                    current_step,
+                    step_passed,
+                    duration,
+                    measurements={"mlx90640_temperature": measured_celsius} if self.mcu else None,
+                )
+
+                # Stop on measurement failure if configured
+                if not step_passed and self.stop_on_failure:
+                    return {"passed": False, "measurements": measurements, "data": {"stopped_at": "test_mlx90640"}}
+
+            except Exception as e:
+                duration = time.time() - start_time
+                self.emit_step_complete("test_mlx90640", current_step, False, duration, error=str(e))
+                self.emit_error("MLX90640_ERROR", str(e))
+                all_passed = False
+                if self.stop_on_failure:
+                    return {"passed": False, "measurements": measurements, "data": {"stopped_at": "test_mlx90640"}}
+
+        # =====================================================================
+        # Step 4: Finalize
+        # =====================================================================
+        current_step += 1
+        self.emit_step_start("finalize", current_step, total_steps, "결과 정리")
+        start_time = time.time()
+
+        try:
+            # Summary
+            self.emit_log(
+                "info",
+                f"테스트 완료 - 전체 결과: {'PASS' if all_passed else 'FAIL'}"
+            )
+
+            duration = time.time() - start_time
+            self.emit_step_complete("finalize", current_step, True, duration)
+
+        except Exception as e:
+            duration = time.time() - start_time
+            self.emit_step_complete("finalize", current_step, False, duration, error=str(e))
+
+        return {
+            "passed": all_passed,
+            "measurements": measurements,
+            "data": {
+                "vl53l0x_enabled": self.test_vl53l0x_enabled,
+                "mlx90640_enabled": self.test_mlx90640_enabled,
+            },
+        }
+
+    async def teardown(self) -> None:
+        """
+        Clean up resources and disconnect hardware.
+
+        Always called, even if setup or run failed.
+        """
+        self.emit_log("info", "리소스 정리 중...")
+
+        try:
+            if self.mcu:
+                if hasattr(self.mcu, "is_connected"):
+                    if await self.mcu.is_connected():
+                        await self.mcu.disconnect()
+                        self.emit_log("info", "MCU 연결 해제 완료")
+                else:
+                    # For mock hardware
+                    await self.mcu.disconnect()
+
+        except Exception as e:
+            self.emit_log("warning", f"정리 중 오류 (무시됨): {e}")
+
+        self.mcu = None
+        self.emit_log("info", "리소스 정리 완료")
+
+    # =========================================================================
+    # Step Methods (for InteractiveSimulator compatibility)
+    # =========================================================================
+
+    async def initialize(self) -> Dict[str, Any]:
+        """
+        Initialize step - for interactive simulation.
+
+        Returns:
+            Step result dictionary
+        """
+        result: Dict[str, Any] = {"passed": True, "data": {}}
+
+        if self.mcu:
+            fw_version = await self.mcu.ping()
+            sensors = await self.mcu.get_sensor_list()
+            result["data"]["firmware_version"] = fw_version
+            result["data"]["sensors"] = sensors
+
         return result
 
     async def test_vl53l0x(self) -> Dict[str, Any]:
         """
-        Test VL53L0X ToF distance sensor.
-
-        Step 2: Set spec and run distance measurement test.
+        VL53L0X test step - for interactive simulation.
 
         Returns:
-            Dict: Test result
+            Step result dictionary
         """
-        logger.info("Step 2: Testing VL53L0X ToF sensor")
-        result: Dict[str, Any] = {
-            "step": "test_vl53l0x",
-            "status": "passed",
-            "data": {},
-        }
+        if not self.mcu:
+            return {"passed": True, "simulated": True}
 
-        try:
-            if not self.mcu or not await self.mcu.is_connected():
-                result["status"] = "failed"
-                result["error"] = "MCU not connected"
-                return result
-
-            # Run VL53L0X test
-            test_result = await self.mcu.test_vl53l0x(
-                target_mm=self.vl53l0x_target_mm,
-                tolerance_mm=self.vl53l0x_tolerance_mm
-            )
-
-            result["data"] = test_result
-
-            # Check pass/fail
-            if not test_result.get("passed", False):
-                result["status"] = "failed"
-                result["error"] = f"VL53L0X test failed: {test_result.get('status_name', 'Unknown')}"
-                if "measured_mm" in test_result:
-                    result["error"] += f" (measured={test_result['measured_mm']}mm)"
-
-            logger.info(f"VL53L0X result: {test_result}")
-
-        except Exception as e:
-            result["status"] = "failed"
-            result["error"] = str(e)
-            logger.exception(f"VL53L0X test failed: {e}")
-
-        self.results.append(result)
+        result = await self.mcu.test_vl53l0x(
+            target_mm=self.vl53l0x_target_mm,
+            tolerance_mm=self.vl53l0x_tolerance_mm,
+        )
         return result
 
     async def test_mlx90640(self) -> Dict[str, Any]:
         """
-        Test MLX90640 IR thermal sensor.
-
-        Step 3: Set spec and run temperature measurement test.
+        MLX90640 test step - for interactive simulation.
 
         Returns:
-            Dict: Test result
+            Step result dictionary
         """
-        logger.info("Step 3: Testing MLX90640 IR thermal sensor")
-        result: Dict[str, Any] = {
-            "step": "test_mlx90640",
-            "status": "passed",
-            "data": {},
-        }
+        if not self.mcu:
+            return {"passed": True, "simulated": True}
 
-        try:
-            if not self.mcu or not await self.mcu.is_connected():
-                result["status"] = "failed"
-                result["error"] = "MCU not connected"
-                return result
-
-            # Run MLX90640 test
-            test_result = await self.mcu.test_mlx90640(
-                target_celsius=self.mlx90640_target_celsius,
-                tolerance_celsius=self.mlx90640_tolerance_celsius
-            )
-
-            result["data"] = test_result
-
-            # Check pass/fail
-            if not test_result.get("passed", False):
-                result["status"] = "failed"
-                result["error"] = f"MLX90640 test failed: {test_result.get('status_name', 'Unknown')}"
-                if "measured_celsius" in test_result:
-                    result["error"] += f" (measured={test_result['measured_celsius']:.1f}C)"
-
-            logger.info(f"MLX90640 result: {test_result}")
-
-        except Exception as e:
-            result["status"] = "failed"
-            result["error"] = str(e)
-            logger.exception(f"MLX90640 test failed: {e}")
-
-        self.results.append(result)
+        result = await self.mcu.test_mlx90640(
+            target_celsius=self.mlx90640_target_celsius,
+            tolerance_celsius=self.mlx90640_tolerance_celsius,
+        )
         return result
 
     async def finalize(self) -> Dict[str, Any]:
         """
-        Clean up resources and disconnect.
-
-        Step 99 (cleanup): Always runs, even if previous steps failed.
+        Finalize step - for interactive simulation.
 
         Returns:
-            Dict: Cleanup result
+            Step result dictionary
         """
-        logger.info("Step 99: Finalizing and cleaning up")
-        result: Dict[str, Any] = {
-            "step": "finalize",
-            "status": "passed",
-            "data": {"cleanup_completed": False},
-        }
-
-        try:
-            if self.mcu and await self.mcu.is_connected():
-                await self.mcu.disconnect()
-
-            result["data"]["cleanup_completed"] = True
-            result["data"]["total_steps"] = len(self.results)
-
-            # Summarize results
-            passed_count = sum(1 for r in self.results if r.get("status") == "passed")
-            failed_count = sum(1 for r in self.results if r.get("status") == "failed")
-            result["data"]["passed_steps"] = passed_count
-            result["data"]["failed_steps"] = failed_count
-            result["data"]["overall_passed"] = failed_count == 0
-
-            logger.info(f"Cleanup completed. Passed: {passed_count}, Failed: {failed_count}")
-
-        except Exception as e:
-            result["status"] = "failed"
-            result["error"] = str(e)
-            logger.exception(f"Finalization failed: {e}")
-
-        self.results.append(result)
-        return result
-
-    # === Parameter Properties ===
-
-    def get_vl53l0x_target_mm(self) -> int:
-        """VL53L0X target distance parameter."""
-        return self.vl53l0x_target_mm
-
-    def get_vl53l0x_tolerance_mm(self) -> int:
-        """VL53L0X tolerance parameter."""
-        return self.vl53l0x_tolerance_mm
-
-    def get_mlx90640_target_celsius(self) -> float:
-        """MLX90640 target temperature parameter."""
-        return self.mlx90640_target_celsius
-
-    def get_mlx90640_tolerance_celsius(self) -> float:
-        """MLX90640 tolerance parameter."""
-        return self.mlx90640_tolerance_celsius
+        return {"passed": True, "message": "Finalized"}

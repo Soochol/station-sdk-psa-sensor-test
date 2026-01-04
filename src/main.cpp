@@ -22,6 +22,10 @@ extern "C" {
 #include "sensors/mlx90640.h"
 #include "test/test_runner.h"
 #include "MLX90640_API.h"
+#include "vl53l0x_simple.h"
+
+/* VL53L0X device handle from vl53l0x.c */
+extern VL53L0X_Dev_Simple_t vl53l0x_dev;
 }
 
 #include <stdio.h>
@@ -408,10 +412,6 @@ int main(void)
     /* Initialize application */
     App_Init();
 
-    /* === MLX90640 STABILIZATION TIME MEASUREMENT === */
-    /* Measure how long MLX90640 takes to stabilize after boot */
-    DBG_MeasureMLX90640_StabilizationTime();
-
     /* === DEBUG TEST MODE === */
     /* I2C device scan */
     DBG_ScanI2C();
@@ -529,14 +529,18 @@ static void App_MainLoop(void)
     /* Process async test execution (non-blocking) */
     TestRunner_ProcessAsync();
 
-    /* RTT debug output every 1 second */
+    /* RTT debug output every 1 second with live VL53L0X measurement */
     uint32_t now = HAL_GetTick();
     if (now - last_rtt_tick >= 1000) {
         last_rtt_tick = now;
 
+        /* Live VL53L0X measurement */
+        uint16_t live_dist = VL53L0X_Simple_ReadRangeSingleMillimeters(&vl53l0x_dev);
+        bool timeout = VL53L0X_Simple_TimeoutOccurred(&vl53l0x_dev);
+
         /* Print sensor status via RTT */
-        SEGGER_RTT_printf(0, "[%lu ms] VL53L0X: %d mm (status=%d, count=%d)\r\n",
-                          now, dbg_vl53l0x_dist, dbg_test_status, dbg_measure_count);
+        SEGGER_RTT_printf(0, "[%lu ms] VL53L0X: %d mm %s\r\n",
+                          now, live_dist, timeout ? "(TIMEOUT)" : "");
     }
 
     /* Refresh watchdog timer */

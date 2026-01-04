@@ -31,8 +31,8 @@ static SensorSpec_t current_spec;
 static bool spec_set = false;
 static bool initialized = false;
 
-/* VL53L0X device handle */
-static VL53L0X_Dev_Simple_t vl53l0x_dev;
+/* VL53L0X device handle (non-static for RTT debug access from main) */
+VL53L0X_Dev_Simple_t vl53l0x_dev;
 
 /* External debug variable defined in main.cpp */
 extern volatile int dbg_vl53l0x_step;

@@ -282,12 +282,55 @@ static bool MLX90640_HasSpec(void)
     return spec_set;
 }
 
+/**
+ * @brief Read one complete frame (2 subpages) and calculate temperatures
+ * @return 0 on success, negative on error
+ */
+static int MLX90640_ReadCompleteFrame(float* ta_out, float* tr_out)
+{
+    int mlx_status;
+    float ta, tr;
+
+    /* Get first subpage */
+    mlx_status = MLX90640_GetFrameData(MLX90640_I2C_ADDR, frameData);
+    if (mlx_status < 0) {
+        return mlx_status;
+    }
+
+    ta = MLX90640_GetTa(frameData, &mlx_params);
+    tr = ta - 8.0f;  /* Reflected temperature approximation */
+
+    /* Calculate first subpage temperatures */
+    MLX90640_CalculateTo(frameData, &mlx_params, MLX90640_EMISSIVITY, tr, mlxTemperatures);
+
+    /* Wait for next subpage */
+    HAL_Delay(MLX90640_FRAME_INTERVAL_MS);
+
+    /* Get second subpage (with retry) */
+    for (int retry = 0; retry < 3; retry++) {
+        mlx_status = MLX90640_GetFrameData(MLX90640_I2C_ADDR, frameData);
+        if (mlx_status >= 0) break;
+        HAL_Delay(50);
+    }
+
+    if (mlx_status >= 0) {
+        /* Calculate second subpage for complete frame */
+        MLX90640_CalculateTo(frameData, &mlx_params, MLX90640_EMISSIVITY, tr, mlxTemperatures);
+    }
+
+    if (ta_out) *ta_out = ta;
+    if (tr_out) *tr_out = tr;
+
+    return 0;
+}
+
 static TestStatus_t MLX90640_RunTest(SensorResult_t* result)
 {
     int mlx_status;
     float ta, tr;
     float min_temp, max_temp, avg_temp;
     float measured_temp;
+    float measured_sum = 0;
 
     DBG_PRINT("\r\n[MLX90640] RunTest start\r\n");
 
@@ -317,97 +360,61 @@ static TestStatus_t MLX90640_RunTest(SensorResult_t* result)
         }
     }
 
-    /* Wait for sensor warmup if needed */
-    uint32_t elapsed = HAL_GetTick() - init_tick;
-    if (elapsed < MLX90640_WARMUP_TIME_MS) {
-        uint32_t wait_time = MLX90640_WARMUP_TIME_MS - elapsed;
-        DBG_PRINTF("[MLX90640] Waiting %lu ms for warmup...\r\n", wait_time);
-        HAL_Delay(wait_time);
-    }
-
-    /* Get frame data (need 2 subpages for full frame) */
-    DBG_PRINT("[MLX90640] GetFrameData...");
-    mlx_status = MLX90640_GetFrameData(MLX90640_I2C_ADDR, frameData);
-    if (mlx_status < 0) {
-        DBG_PRINTF("FAIL (err=%d)\r\n", mlx_status);
-        return STATUS_FAIL_TIMEOUT;
-    }
-
-    /* Debug: Print frame diagnostics */
-    DBG_FRAME_INFO(frameData, &mlx_params, MLX90640_GetSubPageNumber(frameData));
-
-    ta = MLX90640_GetTa(frameData, &mlx_params);
-    tr = ta - 8.0f;  /* Reflected temperature approximation */
-    DBG_PRINTF("[MLX90640] Ta=%d.%dC\r\n", (int)ta, ((int)(ta * 10) % 10 + 10) % 10);
-
-    /* Calculate object temperatures */
-    DBG_PRINT("[MLX90640] CalculateTo...");
-    MLX90640_CalculateTo(frameData, &mlx_params, MLX90640_EMISSIVITY, tr, mlxTemperatures);
-    DBG_PRINTF("OK (pixel[0]=%d.%d, pixel[1]=%d.%d)\r\n",
-               (int)mlxTemperatures[0], ((int)(mlxTemperatures[0] * 10) % 10 + 10) % 10,
-               (int)mlxTemperatures[1], ((int)(mlxTemperatures[1] * 10) % 10 + 10) % 10);
-
-    /* Wait for next subpage (8Hz = 125ms per frame) */
-    HAL_Delay(150);
-
-    /* Get second subpage for complete frame (with retry) */
-    DBG_PRINT("[MLX90640] GetFrameData...");
-    for (int retry = 0; retry < 5; retry++) {
-        mlx_status = MLX90640_GetFrameData(MLX90640_I2C_ADDR, frameData);
-        if (mlx_status >= 0) break;
-        HAL_Delay(50);
-    }
-    if (mlx_status < 0) {
-        DBG_PRINTF("FAIL (err=%d)\r\n", mlx_status);
-        DBG_PRINT("[MLX90640] Using first subpage only\r\n");
-    } else {
-        DBG_PRINTF("OK (subpage=%d)\r\n", MLX90640_GetSubPageNumber(frameData));
-        /* Calculate second subpage */
-        MLX90640_CalculateTo(frameData, &mlx_params, MLX90640_EMISSIVITY, tr, mlxTemperatures);
-        DBG_PRINTF("[MLX90640] After 2nd: pixel[0]=%d.%d, pixel[1]=%d.%d\r\n",
-                   (int)mlxTemperatures[0], ((int)(mlxTemperatures[0] * 10) % 10 + 10) % 10,
-                   (int)mlxTemperatures[1], ((int)(mlxTemperatures[1] * 10) % 10 + 10) % 10);
-    }
-
-    /* Find min/max/avg temperatures */
-    min_temp = mlxTemperatures[0];
-    max_temp = mlxTemperatures[0];
-    avg_temp = 0;
-
-    for (int i = 0; i < 768; i++) {
-        if (mlxTemperatures[i] < min_temp) min_temp = mlxTemperatures[i];
-        if (mlxTemperatures[i] > max_temp) max_temp = mlxTemperatures[i];
-        avg_temp += mlxTemperatures[i];
-    }
-    avg_temp /= 768.0f;
-
-    DBG_PRINTF("[MLX90640] Temp: min=%d.%dC, max=%d.%dC, avg=%d.%dC\r\n",
-               (int)min_temp, ((int)(min_temp * 10) % 10 + 10) % 10,
-               (int)max_temp, ((int)(max_temp * 10) % 10 + 10) % 10,
-               (int)avg_temp, ((int)(avg_temp * 10) % 10 + 10) % 10);
-
-    /* Debug: Print thermal image */
-    DBG_THERMAL_IMAGE(mlxTemperatures, min_temp, max_temp, avg_temp);
-
-    /* Get measured temperature based on spec */
-    if (current_spec.mlx90640.pixel_x == 0xFF || current_spec.mlx90640.pixel_y == 0xFF) {
-        /* Use average temperature */
-        measured_temp = avg_temp;
-        DBG_PRINTF("[MLX90640] Using average: %d.%02dC\r\n",
-                   (int)measured_temp, ((int)(measured_temp * 100) % 100 + 100) % 100);
-    } else {
-        /* Use specific pixel */
-        int idx = current_spec.mlx90640.pixel_y * 32 + current_spec.mlx90640.pixel_x;
-        if (idx >= 0 && idx < 768) {
-            measured_temp = mlxTemperatures[idx];
-            DBG_PRINTF("[MLX90640] Pixel(%d,%d): %d.%02dC\r\n",
-                       current_spec.mlx90640.pixel_x, current_spec.mlx90640.pixel_y,
-                       (int)measured_temp, ((int)(measured_temp * 100) % 100 + 100) % 100);
-        } else {
-            measured_temp = avg_temp;
-            DBG_PRINT("[MLX90640] Invalid pixel, using average\r\n");
+    /* ===== Discard initial readings for sensor stabilization ===== */
+    DBG_PRINTF("[MLX90640] Discarding %d readings for stabilization...\r\n", MLX90640_DISCARD_READINGS);
+    for (int i = 0; i < MLX90640_DISCARD_READINGS; i++) {
+        mlx_status = MLX90640_ReadCompleteFrame(NULL, NULL);
+        if (mlx_status < 0) {
+            DBG_PRINTF("[MLX90640] Discard read %d failed (err=%d)\r\n", i, mlx_status);
+            return STATUS_FAIL_TIMEOUT;
         }
+        DBG_PRINTF("[MLX90640] Discarded reading %d/%d\r\n", i + 1, MLX90640_DISCARD_READINGS);
     }
+
+    /* ===== Take valid readings and average ===== */
+    DBG_PRINTF("[MLX90640] Taking %d valid readings...\r\n", MLX90640_VALID_READINGS);
+    for (int i = 0; i < MLX90640_VALID_READINGS; i++) {
+        mlx_status = MLX90640_ReadCompleteFrame(&ta, &tr);
+        if (mlx_status < 0) {
+            DBG_PRINTF("[MLX90640] Valid read %d failed (err=%d)\r\n", i, mlx_status);
+            return STATUS_FAIL_TIMEOUT;
+        }
+
+        /* Find min/max/avg for this frame */
+        min_temp = mlxTemperatures[0];
+        max_temp = mlxTemperatures[0];
+        avg_temp = 0;
+        for (int j = 0; j < 768; j++) {
+            if (mlxTemperatures[j] < min_temp) min_temp = mlxTemperatures[j];
+            if (mlxTemperatures[j] > max_temp) max_temp = mlxTemperatures[j];
+            avg_temp += mlxTemperatures[j];
+        }
+        avg_temp /= 768.0f;
+
+        /* Get measured temperature based on spec */
+        if (current_spec.mlx90640.pixel_x == 0xFF || current_spec.mlx90640.pixel_y == 0xFF) {
+            measured_temp = max_temp;
+        } else {
+            int idx = current_spec.mlx90640.pixel_y * 32 + current_spec.mlx90640.pixel_x;
+            measured_temp = (idx >= 0 && idx < 768) ? mlxTemperatures[idx] : max_temp;
+        }
+
+        measured_sum += measured_temp;
+        DBG_PRINTF("[MLX90640] Reading %d/%d: %d.%dC (max=%d.%dC)\r\n",
+                   i + 1, MLX90640_VALID_READINGS,
+                   (int)measured_temp, ((int)(measured_temp * 10) % 10 + 10) % 10,
+                   (int)max_temp, ((int)(max_temp * 10) % 10 + 10) % 10);
+    }
+
+    /* Calculate average of valid readings */
+    measured_temp = measured_sum / MLX90640_VALID_READINGS;
+
+    DBG_PRINTF("[MLX90640] Average: %d.%dC (from %d readings)\r\n",
+               (int)measured_temp, ((int)(measured_temp * 10) % 10 + 10) % 10,
+               MLX90640_VALID_READINGS);
+
+    /* Debug: Print thermal image of last frame */
+    DBG_THERMAL_IMAGE(mlxTemperatures, min_temp, max_temp, avg_temp);
 
     /* Fill result structure (in 0.1°C units) */
     result->mlx90640.measured = (int16_t)(measured_temp * 10);
