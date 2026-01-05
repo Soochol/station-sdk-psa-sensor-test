@@ -12,7 +12,10 @@
       "Bash(git clone:*)",
       "Bash(pip install:*)",
       "Bash(/bin/ls:*)",
-      "Bash(git submodule:*)"
+      "Bash(git submodule:*)",
+      "Bash(grep:*)",
+      "Bash(find:*)",
+      "Bash(cp:*)"
     ]
   },
   "enableAllProjectMcpServers": true,

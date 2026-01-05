@@ -17,3 +17,9 @@ __pycache__/
 
 # Claude Code
 .claude/
+
+# Ruff
+.ruff_cache/
+
+# Serena
+.serena/

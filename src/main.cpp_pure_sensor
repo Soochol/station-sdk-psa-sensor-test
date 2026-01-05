@@ -1,9 +1,10 @@
 /**
  * @file main.cpp
- * @brief PSA Sensor Test Firmware - Standalone Sensor Reading
+ * @brief PSA Sensor Test Firmware - Pure Sensor Reading Mode
  *
  * Simple firmware that initializes VL53L0X and MLX90640 sensors
  * and periodically reads data, outputting via RTT.
+ * No protocol layer - just raw sensor data reading.
  *
  * Hardware Configuration:
  *   - MCU: STM32H723VGT6 @ 384MHz
@@ -16,8 +17,6 @@ extern "C" {
 #include "main.h"
 #include "config.h"
 #include "hal/i2c_handler.h"
-#include "hal/uart_handler.h"
-#include "protocol/protocol.h"
 #include "sensors/sensor_manager.h"
 #include "sensors/vl53l0x.h"
 #include "sensors/mlx90640.h"
@@ -45,7 +44,7 @@ extern float mlxTemperatures[768];
 
 I2C_HandleTypeDef hi2c1;
 I2C_HandleTypeDef hi2c4;
-UART_HandleTypeDef huart4;  /* Required by stm32h7xx_it.c UART4_IRQHandler */
+UART_HandleTypeDef huart4;  /* Required by stm32h7xx_it.c UART4_IRQHandler (unused) */
 
 /* Debug variable required by vl53l0x.c */
 volatile int dbg_vl53l0x_step = 0;
@@ -64,7 +63,6 @@ static void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_I2C1_Init(void);
 static void MX_I2C4_Init(void);
-static void MX_UART4_Init(void);
 static void MPU_Config(void);
 
 #if WATCHDOG_ENABLED
@@ -77,6 +75,8 @@ static void MX_IWDG_Init(void);
 
 static bool vl53l0x_ready = false;
 static bool mlx90640_ready = false;
+static uint32_t last_read_time = 0;
+static const uint32_t READ_INTERVAL_MS = 1000;
 
 /*============================================================================*/
 /* Error Handler                                                              */
@@ -88,14 +88,6 @@ extern "C" void Error_Handler(void)
     while (1) {
         /* Hang in infinite loop on error */
     }
-}
-
-/**
- * @brief UART Rx Complete Callback - bridges HAL callback to UART handler
- */
-extern "C" void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
-{
-    UART_Handler_RxCpltCallback(huart);
 }
 
 /*============================================================================*/
@@ -114,7 +106,7 @@ int main(void)
     SEGGER_RTT_Init();
     SEGGER_RTT_printf(0, "\r\n\r\n");
     SEGGER_RTT_printf(0, "============================================\r\n");
-    SEGGER_RTT_printf(0, "  PSA Sensor Test - Standalone Mode\r\n");
+    SEGGER_RTT_printf(0, "  PSA Sensor Test - Pure Sensor Reading\r\n");
     SEGGER_RTT_printf(0, "  MCU: STM32H723VGT6 @ 384MHz\r\n");
     SEGGER_RTT_printf(0, "============================================\r\n\r\n");
 
@@ -137,10 +129,6 @@ int main(void)
     SEGGER_RTT_printf(0, "[BOOT] I2C1 initialized (VL53L0X)\r\n");
     MX_I2C4_Init();
     SEGGER_RTT_printf(0, "[BOOT] I2C4 initialized (MLX90640)\r\n");
-
-    /* Initialize UART4 for protocol communication */
-    MX_UART4_Init();
-    SEGGER_RTT_printf(0, "[BOOT] UART4 initialized (115200-8-N-1)\r\n");
 
     /* === Power-up sequence === */
     /* Step 1: Enable 12V power rail */
@@ -185,11 +173,6 @@ static void App_Init(void)
     I2C_Handler_Init(I2C_BUS_1, &hi2c1);
     I2C_Handler_Init(I2C_BUS_4, &hi2c4);
 
-    /* Initialize UART handler and protocol */
-    UART_Handler_Init(&huart4);
-    Protocol_Init();
-    SEGGER_RTT_printf(0, "[App] Protocol initialized\r\n");
-
     /* Initialize sensor manager (registers VL53L0X, MLX90640 drivers) */
     SensorManager_Init();
 
@@ -226,23 +209,69 @@ static void App_Init(void)
             SEGGER_RTT_printf(0, "[App] MLX90640 init FAILED\r\n");
         }
     }
+
+    last_read_time = HAL_GetTick();
 }
 
 /**
- * @brief Main application loop - protocol processing with RTT input support
+ * @brief Main application loop - read sensors periodically
  */
 static void App_MainLoop(void)
 {
-    /* Check for RTT input and feed to protocol */
-    uint8_t rtt_buf[64];
-    unsigned int rtt_len = SEGGER_RTT_Read(0, rtt_buf, sizeof(rtt_buf));
-    if (rtt_len > 0) {
-        Protocol_FeedData(rtt_buf, rtt_len);
-        SEGGER_RTT_printf(0, "[RTT-RX] %u bytes\r\n", rtt_len);
+    uint32_t now = HAL_GetTick();
+
+    /* Check if it's time to read sensors */
+    if (now - last_read_time < READ_INTERVAL_MS) {
+        return;
+    }
+    last_read_time = now;
+
+    SEGGER_RTT_printf(0, "\r\n--- Sensor Reading @ %lu ms ---\r\n", now);
+
+    /* Read VL53L0X distance */
+    if (vl53l0x_ready) {
+        uint16_t distance_mm = VL53L0X_Simple_ReadRangeSingleMillimeters(&vl53l0x_dev);
+        if (!VL53L0X_Simple_TimeoutOccurred(&vl53l0x_dev) && distance_mm != 65535) {
+            SEGGER_RTT_printf(0, "[VL53L0X] Distance: %u mm\r\n", distance_mm);
+        } else {
+            SEGGER_RTT_printf(0, "[VL53L0X] Read timeout or error\r\n");
+        }
+    } else {
+        SEGGER_RTT_printf(0, "[VL53L0X] Not ready\r\n");
     }
 
-    /* Process protocol commands from UART and RTT */
-    Protocol_Process();
+    /* Read MLX90640 thermal data */
+    if (mlx90640_ready) {
+        int status = MLX90640_GetFrameData(MLX90640_I2C_ADDR, frameData);
+        if (status >= 0) {
+            float Ta = MLX90640_GetTa(frameData, &mlx_params);
+            float emissivity = 0.95f;
+            MLX90640_CalculateTo(frameData, &mlx_params, emissivity, Ta - 8.0f, mlxTemperatures);
+
+            /* Find min/max/avg temperature */
+            float min_temp = mlxTemperatures[0];
+            float max_temp = mlxTemperatures[0];
+            float sum_temp = 0.0f;
+            for (int i = 0; i < 768; i++) {
+                if (mlxTemperatures[i] < min_temp) min_temp = mlxTemperatures[i];
+                if (mlxTemperatures[i] > max_temp) max_temp = mlxTemperatures[i];
+                sum_temp += mlxTemperatures[i];
+            }
+            float avg_temp = sum_temp / 768.0f;
+
+            /* Print integer parts (RTT doesn't support float) */
+            SEGGER_RTT_printf(0, "[MLX90640] Ta: %d.%d C\r\n",
+                              (int)Ta, (int)((Ta - (int)Ta) * 10));
+            SEGGER_RTT_printf(0, "[MLX90640] Min: %d.%d C, Max: %d.%d C, Avg: %d.%d C\r\n",
+                              (int)min_temp, (int)((min_temp - (int)min_temp) * 10),
+                              (int)max_temp, (int)((max_temp - (int)max_temp) * 10),
+                              (int)avg_temp, (int)((avg_temp - (int)avg_temp) * 10));
+        } else {
+            SEGGER_RTT_printf(0, "[MLX90640] GetFrameData error: %d\r\n", status);
+        }
+    } else {
+        SEGGER_RTT_printf(0, "[MLX90640] Not ready\r\n");
+    }
 }
 
 /*============================================================================*/
@@ -339,37 +368,6 @@ static void MX_I2C4_Init(void)
         Error_Handler();
     }
     if (HAL_I2CEx_ConfigDigitalFilter(&hi2c4, 0) != HAL_OK) {
-        Error_Handler();
-    }
-}
-
-/**
- * @brief UART4 Initialization Function (Protocol Communication)
- *        PA11: RX, PA12: TX, 115200-8-N-1
- */
-static void MX_UART4_Init(void)
-{
-    huart4.Instance = UART4;
-    huart4.Init.BaudRate = 115200;
-    huart4.Init.WordLength = UART_WORDLENGTH_8B;
-    huart4.Init.StopBits = UART_STOPBITS_1;
-    huart4.Init.Parity = UART_PARITY_NONE;
-    huart4.Init.Mode = UART_MODE_TX_RX;
-    huart4.Init.HwFlowCtl = UART_HWCONTROL_NONE;
-    huart4.Init.OverSampling = UART_OVERSAMPLING_16;
-    huart4.Init.OneBitSampling = UART_ONE_BIT_SAMPLE_DISABLE;
-    huart4.Init.ClockPrescaler = UART_PRESCALER_DIV1;
-    huart4.AdvancedInit.AdvFeatureInit = UART_ADVFEATURE_NO_INIT;
-    if (HAL_UART_Init(&huart4) != HAL_OK) {
-        Error_Handler();
-    }
-    if (HAL_UARTEx_SetTxFifoThreshold(&huart4, UART_TXFIFO_THRESHOLD_1_8) != HAL_OK) {
-        Error_Handler();
-    }
-    if (HAL_UARTEx_SetRxFifoThreshold(&huart4, UART_RXFIFO_THRESHOLD_1_8) != HAL_OK) {
-        Error_Handler();
-    }
-    if (HAL_UARTEx_DisableFifoMode(&huart4) != HAL_OK) {
         Error_Handler();
     }
 }

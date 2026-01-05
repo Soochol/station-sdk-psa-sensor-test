@@ -262,7 +262,7 @@ from psa_protocol.constants import (
 # 사용 예
 Command.PING          # 0x01
 Response.TEST_RESULT  # 0x80
-SensorID.VL53L0X      # 0x02
+SensorID.VL53L0X      # 0x01
 TestStatus.PASS       # 0x00
 ErrorCode.CRC_FAIL    # 0x05
 ```

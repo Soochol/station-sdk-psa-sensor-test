@@ -105,8 +105,8 @@ with SerialTransport('/dev/ttyUSB0') as transport:
 
 | 센서 | ID | 설명 |
 |------|-----|------|
-| VL53L0X | 0x02 | ToF 거리 센서 (30-2000mm) |
-| MLX90640 | 0x01 | IR 열화상 센서 (32x24 픽셀) |
+| VL53L0X | 0x01 | ToF 거리 센서 (30-2000mm) |
+| MLX90640 | 0x02 | IR 열화상 센서 (32x24 픽셀) |
 
 ## 관련 소스 코드
 

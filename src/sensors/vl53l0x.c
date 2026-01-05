@@ -89,6 +89,7 @@ static void VL53L0X_SetSpec(const SensorSpec_t* spec);
 static void VL53L0X_GetSpec(SensorSpec_t* spec);
 static bool VL53L0X_HasSpec(void);
 static TestStatus_t VL53L0X_RunTest(SensorResult_t* result);
+static TestStatus_t VL53L0X_ReadSensor(SensorResult_t* result);
 static uint8_t VL53L0X_SerializeSpec(const SensorSpec_t* spec, uint8_t* buffer);
 static uint8_t VL53L0X_ParseSpec(const uint8_t* buffer, SensorSpec_t* spec);
 static uint8_t VL53L0X_SerializeResult(const SensorResult_t* result, uint8_t* buffer);
@@ -106,6 +107,7 @@ const SensorDriver_t VL53L0X_Driver = {
     .get_spec       = VL53L0X_GetSpec,
     .has_spec       = VL53L0X_HasSpec,
     .run_test       = VL53L0X_RunTest,
+    .read_sensor    = VL53L0X_ReadSensor,
     .serialize_spec = VL53L0X_SerializeSpec,
     .parse_spec     = VL53L0X_ParseSpec,
     .serialize_result = VL53L0X_SerializeResult,
@@ -289,6 +291,50 @@ static TestStatus_t VL53L0X_RunTest(SensorResult_t* result)
 
     dbg_vl53l0x_test_step = 200;
     DBG_PRINT("[VL53L0X] PASS\r\n");
+    return STATUS_PASS;
+}
+
+/**
+ * @brief Read sensor data without spec validation (for READ_SENSOR command)
+ */
+static TestStatus_t VL53L0X_ReadSensor(SensorResult_t* result)
+{
+    uint16_t measured_mm;
+
+    DBG_PRINT("\r\n[VL53L0X] ReadSensor start (no spec check)\r\n");
+
+    if (result == NULL) {
+        DBG_PRINT("[VL53L0X] ERROR: result=NULL\r\n");
+        return STATUS_FAIL_INVALID;
+    }
+
+    if (!initialized) {
+        DBG_PRINT("[VL53L0X] Not initialized, calling init...\r\n");
+        if (VL53L0X_Init_Driver() != HAL_OK) {
+            DBG_PRINT("[VL53L0X] Init failed!\r\n");
+            return STATUS_FAIL_INIT;
+        }
+    }
+
+    /* Perform single ranging measurement */
+    DBG_PRINT("[VL53L0X] ReadRangeSingleMillimeters...");
+
+    measured_mm = VL53L0X_Simple_ReadRangeSingleMillimeters(&vl53l0x_dev);
+
+    if (VL53L0X_Simple_TimeoutOccurred(&vl53l0x_dev)) {
+        DBG_PRINT("TIMEOUT\r\n");
+        return STATUS_FAIL_TIMEOUT;
+    }
+    DBG_PRINTF("OK (%umm)\r\n", measured_mm);
+
+    /* Fill result structure (no spec comparison) */
+    result->vl53l0x.measured = measured_mm;
+    result->vl53l0x.target = 0;      /* No spec */
+    result->vl53l0x.tolerance = 0;   /* No spec */
+    result->vl53l0x.diff = 0;        /* No comparison */
+
+    DBG_PRINTF("[VL53L0X] ReadSensor: %umm\r\n", measured_mm);
+
     return STATUS_PASS;
 }
 

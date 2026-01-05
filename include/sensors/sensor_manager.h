@@ -41,7 +41,8 @@ typedef struct SensorDriver {
     bool                (*has_spec)(void);                      /* Check if spec is set */
 
     /* Test Execution */
-    TestStatus_t        (*run_test)(SensorResult_t* result);    /* Execute test */
+    TestStatus_t        (*run_test)(SensorResult_t* result);    /* Execute test (requires spec) */
+    TestStatus_t        (*read_sensor)(SensorResult_t* result); /* Read sensor (no spec required) */
 
     /* Serialization */
     uint8_t             (*serialize_spec)(const SensorSpec_t* spec, uint8_t* buffer);

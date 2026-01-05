@@ -8,7 +8,7 @@
 
 | 항목 | 값 |
 |------|-----|
-| Sensor ID | 0x02 |
+| Sensor ID | 0x01 |
 | Interface | I2C1 @ 0x29 |
 | 측정 범위 | 30mm - 2000mm |
 | 정확도 | ±3% (typical) |
@@ -91,7 +91,7 @@ if result.result:
 
 | 항목 | 값 |
 |------|-----|
-| Sensor ID | 0x01 |
+| Sensor ID | 0x02 |
 | Interface | I2C4 @ 0x33 |
 | 해상도 | 32 x 24 픽셀 |
 | 온도 범위 | -40°C ~ 300°C |
@@ -203,8 +203,8 @@ if result.result:
 
 | ID | 센서 | Spec Size | Result Size |
 |-----|------|-----------|-------------|
-| 0x01 | MLX90640 | 6 bytes | 8 bytes |
-| 0x02 | VL53L0X | 4 bytes | 8 bytes |
+| 0x01 | VL53L0X | 4 bytes | 8 bytes |
+| 0x02 | MLX90640 | 6 bytes | 8 bytes |
 
 ## 데이터 직렬화
 

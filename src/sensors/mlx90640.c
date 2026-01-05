@@ -152,6 +152,7 @@ static void MLX90640_SetSpec(const SensorSpec_t* spec);
 static void MLX90640_GetSpec(SensorSpec_t* spec);
 static bool MLX90640_HasSpec(void);
 static TestStatus_t MLX90640_RunTest(SensorResult_t* result);
+static TestStatus_t MLX90640_ReadSensor(SensorResult_t* result);
 static uint8_t MLX90640_SerializeSpec(const SensorSpec_t* spec, uint8_t* buffer);
 static uint8_t MLX90640_ParseSpec(const uint8_t* buffer, SensorSpec_t* spec);
 static uint8_t MLX90640_SerializeResult(const SensorResult_t* result, uint8_t* buffer);
@@ -169,6 +170,7 @@ const SensorDriver_t MLX90640_Driver = {
     .get_spec       = MLX90640_GetSpec,
     .has_spec       = MLX90640_HasSpec,
     .run_test       = MLX90640_RunTest,
+    .read_sensor    = MLX90640_ReadSensor,
     .serialize_spec = MLX90640_SerializeSpec,
     .parse_spec     = MLX90640_ParseSpec,
     .serialize_result = MLX90640_SerializeResult,
@@ -291,8 +293,12 @@ static int MLX90640_ReadCompleteFrame(float* ta_out, float* tr_out)
     int mlx_status;
     float ta, tr;
 
-    /* Get first subpage */
-    mlx_status = MLX90640_GetFrameData(MLX90640_I2C_ADDR, frameData);
+    /* Get first subpage (with retry) */
+    for (int retry = 0; retry < 10; retry++) {
+        mlx_status = MLX90640_GetFrameData(MLX90640_I2C_ADDR, frameData);
+        if (mlx_status >= 0) break;
+        HAL_Delay(50);  /* Wait and retry */
+    }
     if (mlx_status < 0) {
         return mlx_status;
     }
@@ -307,7 +313,7 @@ static int MLX90640_ReadCompleteFrame(float* ta_out, float* tr_out)
     HAL_Delay(MLX90640_FRAME_INTERVAL_MS);
 
     /* Get second subpage (with retry) */
-    for (int retry = 0; retry < 3; retry++) {
+    for (int retry = 0; retry < 10; retry++) {
         mlx_status = MLX90640_GetFrameData(MLX90640_I2C_ADDR, frameData);
         if (mlx_status >= 0) break;
         HAL_Delay(50);
@@ -440,6 +446,78 @@ static TestStatus_t MLX90640_RunTest(SensorResult_t* result)
     }
 
     DBG_PRINT("[MLX90640] PASS\r\n");
+    return STATUS_PASS;
+}
+
+/**
+ * @brief Read sensor data without spec validation (for READ_SENSOR command)
+ */
+static TestStatus_t MLX90640_ReadSensor(SensorResult_t* result)
+{
+    int mlx_status;
+    float ta, tr;
+    float min_temp, max_temp, avg_temp;
+
+    DBG_PRINT("\r\n[MLX90640] ReadSensor start (no spec check)\r\n");
+
+    if (result == NULL) {
+        DBG_PRINT("[MLX90640] ERROR: result=NULL\r\n");
+        return STATUS_FAIL_INVALID;
+    }
+
+    if (!initialized) {
+        DBG_PRINT("[MLX90640] Not initialized, calling init...\r\n");
+        if (MLX90640_Init_Driver() != HAL_OK) {
+            DBG_PRINT("[MLX90640] Init failed!\r\n");
+            return STATUS_FAIL_INIT;
+        }
+    }
+
+    /* Discard initial readings for sensor stabilization */
+    DBG_PRINTF("[MLX90640] Discarding %d readings for stabilization...\r\n", MLX90640_DISCARD_READINGS);
+    for (int i = 0; i < MLX90640_DISCARD_READINGS; i++) {
+        mlx_status = MLX90640_ReadCompleteFrame(NULL, NULL);
+        if (mlx_status < 0) {
+            DBG_PRINTF("[MLX90640] Discard read %d failed (err=%d)\r\n", i, mlx_status);
+            return STATUS_FAIL_TIMEOUT;
+        }
+    }
+
+    /* Read one valid frame */
+    mlx_status = MLX90640_ReadCompleteFrame(&ta, &tr);
+    if (mlx_status < 0) {
+        DBG_PRINTF("[MLX90640] Read failed (err=%d)\r\n", mlx_status);
+        return STATUS_FAIL_TIMEOUT;
+    }
+
+    /* Calculate min/max/avg */
+    min_temp = mlxTemperatures[0];
+    max_temp = mlxTemperatures[0];
+    avg_temp = 0;
+    for (int j = 0; j < 768; j++) {
+        if (mlxTemperatures[j] < min_temp) min_temp = mlxTemperatures[j];
+        if (mlxTemperatures[j] > max_temp) max_temp = mlxTemperatures[j];
+        avg_temp += mlxTemperatures[j];
+    }
+    avg_temp /= 768.0f;
+
+    /* Fill result structure (use max_temp as measured, no spec comparison) */
+    result->mlx90640.measured = (int16_t)(max_temp * 10);
+    result->mlx90640.target = 0;      /* No spec */
+    result->mlx90640.tolerance = 0;   /* No spec */
+    result->mlx90640.diff = 0;        /* No comparison */
+    result->mlx90640.ambient = (int16_t)(ta * 10);
+    result->mlx90640.min_temp = (int16_t)(min_temp * 10);
+    result->mlx90640.max_temp = (int16_t)(max_temp * 10);
+
+    DBG_PRINTF("[MLX90640] ReadSensor: max=%d.%dC, min=%d.%dC, ambient=%d.%dC\r\n",
+               (int)max_temp, ((int)(max_temp * 10) % 10 + 10) % 10,
+               (int)min_temp, ((int)(min_temp * 10) % 10 + 10) % 10,
+               (int)ta, ((int)(ta * 10) % 10 + 10) % 10);
+
+    /* Debug: Print thermal image */
+    DBG_THERMAL_IMAGE(mlxTemperatures, min_temp, max_temp, avg_temp);
+
     return STATUS_PASS;
 }
 

@@ -210,12 +210,16 @@ static void Handle_ReadSensor(const Frame_t* request, Frame_t* response)
         return;
     }
 
-    /* Run sensor measurement (reuse run_test, ignore pass/fail) */
+    /* Run sensor measurement (use read_sensor if available, fallback to run_test) */
     SensorResult_t result;
     memset(&result, 0, sizeof(result));
 
     TestStatus_t status = STATUS_NOT_TESTED;
-    if (driver->run_test != NULL) {
+    if (driver->read_sensor != NULL) {
+        /* Use dedicated read function (no spec required) */
+        status = driver->read_sensor(&result);
+    } else if (driver->run_test != NULL) {
+        /* Fallback to run_test (may require spec) */
         status = driver->run_test(&result);
     }
 
@@ -226,7 +230,7 @@ static void Handle_ReadSensor(const Frame_t* request, Frame_t* response)
 
     /* Serialize raw result data */
     if (driver->serialize_result != NULL) {
-        uint8_t result_buffer[8];
+        uint8_t result_buffer[16];  /* MLX90640 needs 14 bytes */
         uint8_t result_len = driver->serialize_result(&result, result_buffer);
         Frame_AddBytes(response, result_buffer, result_len);
     }
