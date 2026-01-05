@@ -20,6 +20,7 @@ static void Handle_Ping(const Frame_t* request, Frame_t* response);
 static void Handle_TestAll(const Frame_t* request, Frame_t* response);
 static void Handle_TestSingle(const Frame_t* request, Frame_t* response);
 static void Handle_GetSensorList(const Frame_t* request, Frame_t* response);
+static void Handle_ReadSensor(const Frame_t* request, Frame_t* response);
 static void Handle_SetSpec(const Frame_t* request, Frame_t* response);
 static void Handle_GetSpec(const Frame_t* request, Frame_t* response);
 
@@ -54,6 +55,10 @@ bool Commands_Process(const Frame_t* request, Frame_t* response)
 
         case CMD_GET_SENSOR_LIST:
             Handle_GetSensorList(request, response);
+            return true;
+
+        case CMD_READ_SENSOR:
+            Handle_ReadSensor(request, response);
             return true;
 
         case CMD_SET_SPEC:
@@ -179,6 +184,51 @@ static void Handle_GetSensorList(const Frame_t* request, Frame_t* response)
             Frame_AddByte(response, name_len);
             Frame_AddBytes(response, (const uint8_t*)name, name_len);
         }
+    }
+}
+
+static void Handle_ReadSensor(const Frame_t* request, Frame_t* response)
+{
+    /* Payload: [sensor_id] */
+    if (request->payload_len < 1) {
+        Commands_BuildNAK(response, ERR_INVALID_PAYLOAD);
+        return;
+    }
+
+    SensorID_t sensor_id = (SensorID_t)request->payload[0];
+
+    /* Get sensor driver */
+    const SensorDriver_t* driver = SensorManager_GetByID(sensor_id);
+    if (driver == NULL) {
+        Commands_BuildNAK(response, ERR_INVALID_SENSOR_ID);
+        return;
+    }
+
+    /* Check busy state */
+    if (TestRunner_IsBusy()) {
+        Commands_BuildNAK(response, ERR_BUSY);
+        return;
+    }
+
+    /* Run sensor measurement (reuse run_test, ignore pass/fail) */
+    SensorResult_t result;
+    memset(&result, 0, sizeof(result));
+
+    TestStatus_t status = STATUS_NOT_TESTED;
+    if (driver->run_test != NULL) {
+        status = driver->run_test(&result);
+    }
+
+    /* Build response */
+    Frame_Init(response, CMD_SENSOR_DATA);
+    Frame_AddByte(response, (uint8_t)sensor_id);
+    Frame_AddByte(response, (uint8_t)status);
+
+    /* Serialize raw result data */
+    if (driver->serialize_result != NULL) {
+        uint8_t result_buffer[8];
+        uint8_t result_len = driver->serialize_result(&result, result_buffer);
+        Frame_AddBytes(response, result_buffer, result_len);
     }
 }
 

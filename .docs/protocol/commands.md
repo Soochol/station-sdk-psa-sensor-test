@@ -12,6 +12,7 @@ PSA 프로토콜의 명령어 레퍼런스입니다.
 | 0x10 | TEST_ALL | - | 전체 센서 테스트 |
 | 0x11 | TEST_SINGLE | SensorID | 개별 센서 테스트 |
 | 0x12 | GET_SENSOR_LIST | - | 센서 목록 조회 |
+| 0x13 | READ_SENSOR | SensorID | 센서 Raw 데이터 읽기 (스펙 비교 없음) |
 | 0x20 | SET_SPEC | SensorID + Spec | 테스트 스펙 설정 |
 | 0x21 | GET_SPEC | SensorID | 테스트 스펙 조회 |
 
@@ -24,6 +25,7 @@ PSA 프로토콜의 명령어 레퍼런스입니다.
 | 0x81 | SENSOR_LIST | Sensors | 센서 목록 |
 | 0x82 | SPEC_ACK | SensorID | 스펙 설정 확인 |
 | 0x83 | SPEC_DATA | SensorID + Spec | 스펙 데이터 |
+| 0x84 | SENSOR_DATA | SensorID + Status + Data | 센서 Raw 데이터 |
 | 0xFE | NAK | ErrorCode | 에러 응답 |
 
 ---
@@ -100,6 +102,64 @@ print(f"Firmware v{version[0]}.{version[1]}.{version[2]}")
 - Count: 02 (2개 센서)
 - Sensor 1: ID=01, Len=07, Name="VL53L0X"
 - Sensor 2: ID=02, Len=08, Name="MLX90640"
+```
+
+---
+
+## READ_SENSOR (0x13)
+
+센서의 Raw 데이터를 읽습니다. 스펙 비교 없이 측정값만 반환합니다.
+
+### Request
+
+```
+┌──────┬──────┬──────┬──────────┬──────┬──────┐
+│ 0x02 │ 0x01 │ 0x13 │ SensorID │ CRC  │ 0x03 │
+└──────┴──────┴──────┴──────────┴──────┴──────┘
+```
+
+### Response (SENSOR_DATA - 0x84)
+
+```
+┌──────┬──────┬──────┬──────────┬────────┬────────────┬──────┬──────┐
+│ 0x02 │ LEN  │ 0x84 │ SensorID │ Status │  RawData   │ CRC  │ 0x03 │
+└──────┴──────┴──────┴──────────┴────────┴────────────┴──────┴──────┘
+```
+
+| 필드 | 타입 | 설명 |
+|------|------|------|
+| SensorID | uint8 | 센서 ID |
+| Status | uint8 | 측정 상태 (0x00=성공, 기타=에러) |
+| RawData | bytes | 센서별 측정 데이터 |
+
+### VL53L0X Raw Data (8 bytes)
+
+```
+┌─────────────────┬─────────────────┬─────────────────┬─────────────────┐
+│  Measured (mm)  │     Target      │    Tolerance    │      Diff       │
+│  uint16 (BE)    │   uint16 (BE)   │   uint16 (BE)   │   uint16 (BE)   │
+└─────────────────┴─────────────────┴─────────────────┴─────────────────┘
+```
+
+### MLX90640 Raw Data (8 bytes)
+
+```
+┌─────────────────┬─────────────────┬─────────────────┬─────────────────┐
+│ Measured(x10°C) │  Target(x10°C)  │ Tolerance(x10°C)│   Diff(x10°C)   │
+│   int16 (BE)    │   int16 (BE)    │   uint16 (BE)   │   uint16 (BE)   │
+└─────────────────┴─────────────────┴─────────────────┴─────────────────┘
+```
+
+### Python 예제
+
+```python
+# VL53L0X 거리 읽기
+data = client.read_sensor(SENSOR_VL53L0X)
+distance_mm = data.measured
+
+# MLX90640 온도 읽기
+data = client.read_sensor(SENSOR_MLX90640)
+temp_c = data.measured / 10.0
 ```
 
 ---

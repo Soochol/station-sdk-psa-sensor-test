@@ -35,6 +35,7 @@ typedef enum {
     CMD_TEST_ALL            = 0x10,     /* Test all registered sensors */
     CMD_TEST_SINGLE         = 0x11,     /* Test specific sensor (payload: sensor_id) */
     CMD_GET_SENSOR_LIST     = 0x12,     /* Get list of registered sensors */
+    CMD_READ_SENSOR         = 0x13,     /* Read sensor raw data (no spec comparison) */
     CMD_SET_SPEC            = 0x20,     /* Set sensor specification */
     CMD_GET_SPEC            = 0x21,     /* Get sensor specification */
 
@@ -44,6 +45,7 @@ typedef enum {
     CMD_SENSOR_LIST         = 0x81,     /* Sensor list response */
     CMD_SPEC_ACK            = 0x82,     /* Specification set acknowledgement */
     CMD_SPEC_DATA           = 0x83,     /* Specification data response */
+    CMD_SENSOR_DATA         = 0x84,     /* Raw sensor data response */
     CMD_NAK                 = 0xFE,     /* Negative acknowledgement (error) */
 } CommandCode_t;
 

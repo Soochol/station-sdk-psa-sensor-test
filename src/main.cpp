@@ -16,6 +16,8 @@ extern "C" {
 #include "main.h"
 #include "config.h"
 #include "hal/i2c_handler.h"
+#include "hal/uart_handler.h"
+#include "protocol/protocol.h"
 #include "sensors/sensor_manager.h"
 #include "sensors/vl53l0x.h"
 #include "sensors/mlx90640.h"
@@ -62,6 +64,7 @@ static void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_I2C1_Init(void);
 static void MX_I2C4_Init(void);
+static void MX_UART4_Init(void);
 static void MPU_Config(void);
 
 #if WATCHDOG_ENABLED
@@ -85,6 +88,14 @@ extern "C" void Error_Handler(void)
     while (1) {
         /* Hang in infinite loop on error */
     }
+}
+
+/**
+ * @brief UART Rx Complete Callback - bridges HAL callback to UART handler
+ */
+extern "C" void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+{
+    UART_Handler_RxCpltCallback(huart);
 }
 
 /*============================================================================*/
@@ -126,6 +137,10 @@ int main(void)
     SEGGER_RTT_printf(0, "[BOOT] I2C1 initialized (VL53L0X)\r\n");
     MX_I2C4_Init();
     SEGGER_RTT_printf(0, "[BOOT] I2C4 initialized (MLX90640)\r\n");
+
+    /* Initialize UART4 for protocol communication */
+    MX_UART4_Init();
+    SEGGER_RTT_printf(0, "[BOOT] UART4 initialized (115200-8-N-1)\r\n");
 
     /* === Power-up sequence === */
     /* Step 1: Enable 12V power rail */
@@ -170,6 +185,11 @@ static void App_Init(void)
     I2C_Handler_Init(I2C_BUS_1, &hi2c1);
     I2C_Handler_Init(I2C_BUS_4, &hi2c4);
 
+    /* Initialize UART handler and protocol */
+    UART_Handler_Init(&huart4);
+    Protocol_Init();
+    SEGGER_RTT_printf(0, "[App] Protocol initialized\r\n");
+
     /* Initialize sensor manager (registers VL53L0X, MLX90640 drivers) */
     SensorManager_Init();
 
@@ -209,105 +229,12 @@ static void App_Init(void)
 }
 
 /**
- * @brief Main application loop - reads sensors periodically
+ * @brief Main application loop - protocol processing only
  */
 static void App_MainLoop(void)
 {
-    static uint32_t last_read_tick = 0;
-    static uint32_t sample_count = 0;
-    uint32_t now = HAL_GetTick();
-
-    /* Read sensors every 1 second */
-    if (now - last_read_tick >= 1000) {
-        last_read_tick = now;
-        sample_count++;
-
-        SEGGER_RTT_printf(0, "=== Sample #%lu @ %lu ms ===\r\n", sample_count, now);
-
-        /* ===== Read VL53L0X ===== */
-        if (vl53l0x_ready) {
-            uint16_t distance = VL53L0X_Simple_ReadRangeSingleMillimeters(&vl53l0x_dev);
-            bool timeout = VL53L0X_Simple_TimeoutOccurred(&vl53l0x_dev);
-
-            if (timeout) {
-                SEGGER_RTT_printf(0, "VL53L0X: TIMEOUT\r\n");
-            } else {
-                SEGGER_RTT_printf(0, "VL53L0X: %d mm\r\n", distance);
-            }
-        } else {
-            SEGGER_RTT_printf(0, "VL53L0X: NOT READY\r\n");
-        }
-
-        /* ===== Read MLX90640 ===== */
-        if (mlx90640_ready) {
-            int mlx_status;
-
-            /* Get first subpage */
-            mlx_status = MLX90640_GetFrameData(MLX90640_I2C_ADDR, frameData);
-            if (mlx_status < 0) {
-                SEGGER_RTT_printf(0, "MLX90640: Frame error %d\r\n", mlx_status);
-            } else {
-                /* Calculate temperatures */
-                float ta = MLX90640_GetTa(frameData, &mlx_params);
-                float tr = ta - 8.0f;
-                MLX90640_CalculateTo(frameData, &mlx_params, MLX90640_EMISSIVITY, tr, mlxTemperatures);
-
-                /* Wait for second subpage */
-                HAL_Delay(130);
-                mlx_status = MLX90640_GetFrameData(MLX90640_I2C_ADDR, frameData);
-                if (mlx_status >= 0) {
-                    MLX90640_CalculateTo(frameData, &mlx_params, MLX90640_EMISSIVITY, tr, mlxTemperatures);
-                }
-
-                /* Calculate statistics */
-                float min_temp = mlxTemperatures[0];
-                float max_temp = mlxTemperatures[0];
-                float avg_temp = 0;
-
-                for (int i = 0; i < 768; i++) {
-                    if (mlxTemperatures[i] < min_temp) min_temp = mlxTemperatures[i];
-                    if (mlxTemperatures[i] > max_temp) max_temp = mlxTemperatures[i];
-                    avg_temp += mlxTemperatures[i];
-                }
-                avg_temp /= 768.0f;
-
-                /* Center pixel (16, 12) */
-                float center_temp = mlxTemperatures[12 * 32 + 16];
-
-                /* Output via RTT (integer formatting for float) */
-                int avg_int = (int)avg_temp;
-                int avg_dec = ((int)(avg_temp * 10) % 10);
-                if (avg_dec < 0) avg_dec = -avg_dec;
-
-                int min_int = (int)min_temp;
-                int min_dec = ((int)(min_temp * 10) % 10);
-                if (min_dec < 0) min_dec = -min_dec;
-
-                int max_int = (int)max_temp;
-                int max_dec = ((int)(max_temp * 10) % 10);
-                if (max_dec < 0) max_dec = -max_dec;
-
-                int ctr_int = (int)center_temp;
-                int ctr_dec = ((int)(center_temp * 10) % 10);
-                if (ctr_dec < 0) ctr_dec = -ctr_dec;
-
-                int ta_int = (int)ta;
-                int ta_dec = ((int)(ta * 10) % 10);
-                if (ta_dec < 0) ta_dec = -ta_dec;
-
-                SEGGER_RTT_printf(0, "MLX90640: Avg=%d.%dC, Min=%d.%dC, Max=%d.%dC, Center=%d.%dC, Ta=%d.%dC\r\n",
-                                  avg_int, avg_dec,
-                                  min_int, min_dec,
-                                  max_int, max_dec,
-                                  ctr_int, ctr_dec,
-                                  ta_int, ta_dec);
-            }
-        } else {
-            SEGGER_RTT_printf(0, "MLX90640: NOT READY\r\n");
-        }
-
-        SEGGER_RTT_printf(0, "\r\n");
-    }
+    /* Process protocol commands from UART */
+    Protocol_Process();
 }
 
 /*============================================================================*/
@@ -404,6 +331,37 @@ static void MX_I2C4_Init(void)
         Error_Handler();
     }
     if (HAL_I2CEx_ConfigDigitalFilter(&hi2c4, 0) != HAL_OK) {
+        Error_Handler();
+    }
+}
+
+/**
+ * @brief UART4 Initialization Function (Protocol Communication)
+ *        PA11: RX, PA12: TX, 115200-8-N-1
+ */
+static void MX_UART4_Init(void)
+{
+    huart4.Instance = UART4;
+    huart4.Init.BaudRate = 115200;
+    huart4.Init.WordLength = UART_WORDLENGTH_8B;
+    huart4.Init.StopBits = UART_STOPBITS_1;
+    huart4.Init.Parity = UART_PARITY_NONE;
+    huart4.Init.Mode = UART_MODE_TX_RX;
+    huart4.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+    huart4.Init.OverSampling = UART_OVERSAMPLING_16;
+    huart4.Init.OneBitSampling = UART_ONE_BIT_SAMPLE_DISABLE;
+    huart4.Init.ClockPrescaler = UART_PRESCALER_DIV1;
+    huart4.AdvancedInit.AdvFeatureInit = UART_ADVFEATURE_NO_INIT;
+    if (HAL_UART_Init(&huart4) != HAL_OK) {
+        Error_Handler();
+    }
+    if (HAL_UARTEx_SetTxFifoThreshold(&huart4, UART_TXFIFO_THRESHOLD_1_8) != HAL_OK) {
+        Error_Handler();
+    }
+    if (HAL_UARTEx_SetRxFifoThreshold(&huart4, UART_RXFIFO_THRESHOLD_1_8) != HAL_OK) {
+        Error_Handler();
+    }
+    if (HAL_UARTEx_DisableFifoMode(&huart4) != HAL_OK) {
         Error_Handler();
     }
 }
