@@ -1,77 +1,77 @@
 # Station SDK - PSA Sensor Test Sequence Manifest
-# VL53L0X ToF 거리 센서와 MLX90640 IR 열화상 센서 테스트
+# VL53L0X ToF distance sensor and MLX90640 IR thermal sensor test
 
 name: psa_sensor_test
 version: "2.0.0"
 author: "Station SDK Team"
 description: |
-  PSA(Preconfigured Sensor Array) 센서 테스트 시퀀스.
-  STM32H723 MCU와 UART 통신하여 VL53L0X, MLX90640 센서를 테스트합니다.
+  PSA (Preconfigured Sensor Array) sensor test sequence.
+  Tests VL53L0X and MLX90640 sensors via UART communication with STM32H723 MCU.
 
-# 실행 모드 설정
+# Execution mode settings
 modes:
-  automatic: true      # 자동 순차 실행
-  manual: true         # 수동 스텝별 실행
-  cli: true            # CLI 서브프로세스 실행 (SDK v2.0)
+  automatic: true      # Automatic sequential execution
+  manual: true         # Manual step-by-step execution
+  cli: true            # CLI subprocess execution (SDK v2.0)
   interactive: false
 
-# 진입점 설정
+# Entry point settings
 entry_point:
   module: sequence
   class: PSASensorTestSequence
-  cli_main: main         # CLI 진입점 (main.py)
+  cli_main: main         # CLI entry point (main.py)
 
-# 하드웨어 정의
+# Hardware definitions
 hardware:
   psa_mcu:
     display_name: "PSA MCU (STM32H723)"
     driver: drivers.psa_mcu
     class: PSAMCUDriver
-    description: "STM32H723 MCU 센서 테스트 보드"
+    description: "STM32H723 MCU sensor test board"
     config_schema:
       port:
         type: string
         required: true
         default: "/dev/ttyUSB0"
-        description: "시리얼 포트 (예: /dev/ttyUSB0, COM3)"
+        description: "Serial port (e.g., /dev/ttyUSB0, COM3)"
       baudrate:
         type: integer
         required: false
         default: 115200
-        description: "통신 속도 (bps)"
+        description: "Communication speed (bps)"
       timeout:
         type: float
         required: false
         default: 5.0
         min: 1.0
         max: 30.0
-        description: "응답 대기 타임아웃 (초)"
+        description: "Response timeout (seconds)"
     manual_commands:
       - name: ping
-        display_name: "연결 확인 (PING)"
+        display_name: "Connection Check (PING)"
         category: diagnostic
-        description: "MCU 연결 상태 및 펌웨어 버전 확인"
+        description: "Check MCU connection and firmware version"
         parameters: []
         returns:
           type: string
-          description: "펌웨어 버전 (예: 1.0.0)"
+          description: "Firmware version (e.g., 1.0.0)"
 
       - name: get_sensor_list
-        display_name: "센서 목록 조회"
+        display_name: "Get Sensor List"
         category: diagnostic
-        description: "등록된 센서 목록 조회"
+        description: "Get list of registered sensors"
         parameters: []
         returns:
           type: array
-          description: "센서 정보 리스트"
+          description: "Sensor info list"
 
       - name: test_vl53l0x
-        display_name: "VL53L0X 테스트"
+        display_name: "VL53L0X Test"
         category: measurement
-        description: "ToF 거리 센서 테스트 실행"
+        description: "Run ToF distance sensor test"
         parameters:
           - name: target_mm
-            display_name: "목표 거리"
+            display_name: "Target Distance"
             type: integer
             required: false
             default: 500
@@ -79,7 +79,7 @@ hardware:
             max: 2000
             unit: "mm"
           - name: tolerance_mm
-            display_name: "허용 오차"
+            display_name: "Tolerance"
             type: integer
             required: false
             default: 100
@@ -88,15 +88,15 @@ hardware:
             unit: "mm"
         returns:
           type: object
-          description: "테스트 결과"
+          description: "Test result"
 
       - name: test_mlx90640
-        display_name: "MLX90640 테스트"
+        display_name: "MLX90640 Test"
         category: measurement
-        description: "IR 열화상 센서 테스트 실행"
+        description: "Run IR thermal sensor test"
         parameters:
           - name: target_celsius
-            display_name: "목표 온도"
+            display_name: "Target Temperature"
             type: float
             required: false
             default: 25.0
@@ -104,7 +104,7 @@ hardware:
             max: 300.0
             unit: "C"
           - name: tolerance_celsius
-            display_name: "허용 오차"
+            display_name: "Tolerance"
             type: float
             required: false
             default: 10.0
@@ -113,77 +113,77 @@ hardware:
             unit: "C"
         returns:
           type: object
-          description: "테스트 결과"
+          description: "Test result"
 
-# 시퀀스 파라미터
+# Sequence parameters
 parameters:
-  # 통신 설정
+  # Communication settings
   port:
-    display_name: "시리얼 포트"
+    display_name: "Serial Port"
     type: string
     default: "/dev/ttyUSB0"
-    description: "MCU 시리얼 포트 (예: /dev/ttyUSB0, COM3)"
+    description: "MCU serial port (e.g., /dev/ttyUSB0, COM3)"
 
-  # VL53L0X 파라미터
+  # VL53L0X parameters
   vl53l0x_target_mm:
-    display_name: "VL53L0X 목표 거리"
+    display_name: "VL53L0X Target Distance"
     type: integer
     default: 500
     min: 30
     max: 2000
     unit: "mm"
-    description: "ToF 센서 목표 거리"
+    description: "ToF sensor target distance"
 
   vl53l0x_tolerance_mm:
-    display_name: "VL53L0X 허용 오차"
+    display_name: "VL53L0X Tolerance"
     type: integer
     default: 100
     min: 1
     max: 500
     unit: "mm"
-    description: "ToF 센서 허용 오차"
+    description: "ToF sensor tolerance"
 
-  # MLX90640 파라미터
+  # MLX90640 parameters
   mlx90640_target_celsius:
-    display_name: "MLX90640 목표 온도"
+    display_name: "MLX90640 Target Temperature"
     type: float
     default: 25.0
     min: -40.0
     max: 300.0
     unit: "C"
-    description: "IR 센서 목표 온도 (섭씨)"
+    description: "IR sensor target temperature (Celsius)"
 
   mlx90640_tolerance_celsius:
-    display_name: "MLX90640 허용 오차"
+    display_name: "MLX90640 Tolerance"
     type: float
     default: 10.0
     min: 0.1
     max: 50.0
     unit: "C"
-    description: "IR 센서 허용 오차 (섭씨)"
+    description: "IR sensor tolerance (Celsius)"
 
-  # 센서별 활성화 설정
+  # Sensor enable settings
   test_vl53l0x_enabled:
-    display_name: "VL53L0X 테스트 활성화"
+    display_name: "Enable VL53L0X Test"
     type: boolean
     default: true
-    description: "VL53L0X ToF 센서 테스트 실행 여부"
+    description: "Whether to run VL53L0X ToF sensor test"
 
   test_mlx90640_enabled:
-    display_name: "MLX90640 테스트 활성화"
+    display_name: "Enable MLX90640 Test"
     type: boolean
     default: true
-    description: "MLX90640 IR 센서 테스트 실행 여부"
+    description: "Whether to run MLX90640 IR sensor test"
 
-  # 실행 제어
+  # Execution control
   stop_on_failure:
-    display_name: "실패 시 중단"
+    display_name: "Stop on Failure"
     type: boolean
     default: true
-    description: "스텝 실패 시 즉시 시퀀스 중단 (false면 모든 스텝 실행)"
+    description: "Stop sequence immediately on step failure (if false, run all steps)"
 
-# 스텝 정의
-# Note: setup과 teardown은 SDK에서 자동으로 추가되는 lifecycle 스텝입니다.
+# Step definitions
+# Note: setup and teardown are lifecycle steps automatically added by the SDK.
 steps:
   - name: setup
     display_name: "Setup"
@@ -194,9 +194,21 @@ steps:
       skippable: false
       auto_only: true
 
-  - name: initialize
-    display_name: "하드웨어 초기화"
+  - name: ping_pong
+    display_name: "PING/PONG Communication Test"
     order: 1
+    timeout: 10.0
+    estimated_duration: 1.0
+    manual:
+      skippable: false
+      auto_only: false
+      prompt: null
+      pause_before: false
+      pause_after: false
+
+  - name: initialize
+    display_name: "Get Sensor List"
+    order: 2
     timeout: 30.0
     estimated_duration: 5.0
     manual:
@@ -207,14 +219,14 @@ steps:
       pause_after: false
 
   - name: test_vl53l0x
-    display_name: "VL53L0X 거리 테스트"
-    order: 2
+    display_name: "VL53L0X Distance Test"
+    order: 3
     timeout: 15.0
     estimated_duration: 8.0
     retry: 1
     manual:
       skippable: true
-      prompt: "VL53L0X ToF 거리 센서를 테스트합니다."
+      prompt: "Test VL53L0X ToF distance sensor."
       pause_before: false
       pause_after: false
       parameter_overrides:
@@ -222,14 +234,14 @@ steps:
         - vl53l0x_tolerance_mm
 
   - name: test_mlx90640
-    display_name: "MLX90640 온도 테스트"
-    order: 3
+    display_name: "MLX90640 Temperature Test"
+    order: 4
     timeout: 20.0
     estimated_duration: 12.0
     retry: 1
     manual:
       skippable: true
-      prompt: "MLX90640 IR 열화상 센서를 테스트합니다."
+      prompt: "Test MLX90640 IR thermal sensor."
       pause_before: false
       pause_after: false
       parameter_overrides:
@@ -237,8 +249,8 @@ steps:
         - mlx90640_tolerance_celsius
 
   - name: finalize
-    display_name: "정리"
-    order: 4
+    display_name: "Finalize"
+    order: 5
     timeout: 10.0
     estimated_duration: 2.0
     cleanup: true
@@ -248,14 +260,14 @@ steps:
 
   - name: teardown
     display_name: "Teardown"
-    order: 5
+    order: 6
     timeout: 10.0
     estimated_duration: 1.0
     manual:
       skippable: false
       auto_only: true
 
-# Python 의존성
+# Python dependencies
 dependencies:
   python:
     - station-service-sdk==1.0.4
