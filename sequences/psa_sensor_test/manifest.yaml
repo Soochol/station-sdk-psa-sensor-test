@@ -2,7 +2,7 @@
 # VL53L0X ToF distance sensor and MLX90640 IR thermal sensor test
 
 name: psa_sensor_test
-version: "2.0.0"
+version: "1.0.6"
 author: "Station SDK Team"
 description: |
   PSA (Preconfigured Sensor Array) sensor test sequence.
@@ -267,8 +267,6 @@ steps:
       skippable: false
       auto_only: true
 
-# Python dependencies
+# Python dependencies (defined in pyproject.toml)
 dependencies:
-  python:
-    - station-service-sdk==1.0.4
-    - pyserial>=3.5,<4.0
+  python: []
