@@ -4,20 +4,11 @@ Serial transport layer.
 Provides reliable serial communication with background receive thread.
 """
 
-import subprocess
-import sys
+import serial
 import threading
 import logging
 from typing import Optional
 from queue import Queue, Empty
-
-# Auto-install pyserial if not available
-try:
-    import serial
-except ImportError:
-    logging.getLogger(__name__).info("pyserial not found, installing...")
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "pyserial"])
-    import serial
 
 from .exceptions import ConnectionError
 
