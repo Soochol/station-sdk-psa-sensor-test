@@ -191,7 +191,7 @@ class PSASensorTestSequence(SequenceBase):
             RunResult with passed status and measurements
         """
         # Calculate total steps
-        total_steps = 1  # initialize is always run
+        total_steps = 2  # ping_pong and initialize are always run
         if self.test_vl53l0x_enabled:
             total_steps += 1
         if self.test_mlx90640_enabled:
@@ -203,27 +203,53 @@ class PSASensorTestSequence(SequenceBase):
         measurements: Dict[str, Any] = {}
 
         # =====================================================================
-        # Step 1: Initialize
+        # Step 1: PING/PONG Communication Test
         # =====================================================================
         current_step += 1
-        self.emit_step_start("initialize", current_step, total_steps, "하드웨어 초기화")
+        self.emit_step_start("ping_pong", current_step, total_steps, "PING/PONG 통신 테스트")
         start_time = time.time()
 
         try:
             self.check_abort()
 
             if self.mcu:
-                # Get firmware version
+                # Send PING and receive PONG with firmware version
                 fw_version = await self.mcu.ping()
-                self.emit_log("info", f"펌웨어 버전: {fw_version}")
+                self.emit_log("info", f"PING/PONG 성공 - 펌웨어 버전: {fw_version}")
 
+                measurements["firmware_version"] = fw_version
+                measurements["ping_pong_passed"] = True
+
+            duration = time.time() - start_time
+            self.emit_step_complete("ping_pong", current_step, True, duration)
+
+        except Exception as e:
+            duration = time.time() - start_time
+            self.emit_step_complete("ping_pong", current_step, False, duration, error=str(e))
+            self.emit_error("PING_PONG_ERROR", str(e))
+            measurements["ping_pong_passed"] = False
+            all_passed = False
+            if self.stop_on_failure:
+                return {"passed": False, "measurements": measurements, "data": {"stopped_at": "ping_pong"}}
+
+        # =====================================================================
+        # Step 2: Initialize (Get Sensor List)
+        # =====================================================================
+        current_step += 1
+        self.emit_step_start("initialize", current_step, total_steps, "센서 목록 조회")
+        start_time = time.time()
+
+        try:
+            self.check_abort()
+
+            if self.mcu:
                 # Get sensor list
                 sensors = await self.mcu.get_sensor_list()
                 sensor_names = [s.get("name", "Unknown") for s in sensors]
                 self.emit_log("info", f"감지된 센서: {sensor_names}")
 
-                measurements["firmware_version"] = fw_version
                 measurements["sensor_count"] = len(sensors)
+                measurements["sensors"] = sensor_names
 
             duration = time.time() - start_time
             self.emit_step_complete("initialize", current_step, True, duration)
@@ -237,7 +263,7 @@ class PSASensorTestSequence(SequenceBase):
                 return {"passed": False, "measurements": measurements, "data": {"stopped_at": "initialize"}}
 
         # =====================================================================
-        # Step 2: VL53L0X Distance Test (if enabled)
+        # Step 3: VL53L0X Distance Test (if enabled)
         # =====================================================================
         if self.test_vl53l0x_enabled:
             current_step += 1
@@ -296,7 +322,7 @@ class PSASensorTestSequence(SequenceBase):
                     return {"passed": False, "measurements": measurements, "data": {"stopped_at": "test_vl53l0x"}}
 
         # =====================================================================
-        # Step 3: MLX90640 Temperature Test (if enabled)
+        # Step 4: MLX90640 Temperature Test (if enabled)
         # =====================================================================
         if self.test_mlx90640_enabled:
             current_step += 1
@@ -355,7 +381,7 @@ class PSASensorTestSequence(SequenceBase):
                     return {"passed": False, "measurements": measurements, "data": {"stopped_at": "test_mlx90640"}}
 
         # =====================================================================
-        # Step 4: Finalize
+        # Step 5: Finalize
         # =====================================================================
         current_step += 1
         self.emit_step_start("finalize", current_step, total_steps, "결과 정리")
@@ -412,6 +438,24 @@ class PSASensorTestSequence(SequenceBase):
     # Step Methods (for InteractiveSimulator compatibility)
     # =========================================================================
 
+    async def ping_pong(self) -> Dict[str, Any]:
+        """
+        PING/PONG communication test step - for interactive simulation.
+
+        Returns:
+            Step result dictionary with firmware version
+        """
+        result: Dict[str, Any] = {"passed": True, "data": {}}
+
+        if self.mcu:
+            fw_version = await self.mcu.ping()
+            result["data"]["firmware_version"] = fw_version
+            result["data"]["ping_pong_passed"] = True
+        else:
+            result["simulated"] = True
+
+        return result
+
     async def initialize(self) -> Dict[str, Any]:
         """
         Initialize step - for interactive simulation.
@@ -422,10 +466,9 @@ class PSASensorTestSequence(SequenceBase):
         result: Dict[str, Any] = {"passed": True, "data": {}}
 
         if self.mcu:
-            fw_version = await self.mcu.ping()
             sensors = await self.mcu.get_sensor_list()
-            result["data"]["firmware_version"] = fw_version
             result["data"]["sensors"] = sensors
+            result["data"]["sensor_count"] = len(sensors)
 
         return result
 
