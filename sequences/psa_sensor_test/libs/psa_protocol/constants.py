@@ -37,10 +37,10 @@ class Response(IntEnum):
 
 
 class SensorID(IntEnum):
-    """Sensor identification codes."""
+    """Sensor identification codes (must match MCU sensor_types.h)."""
     NONE = 0x00
-    MLX90640 = 0x01
-    VL53L0X = 0x02
+    VL53L0X = 0x01      # ToF Distance Sensor
+    MLX90640 = 0x02     # IR Thermal Array Sensor
 
     @classmethod
     def name_of(cls, sensor_id: int) -> str:

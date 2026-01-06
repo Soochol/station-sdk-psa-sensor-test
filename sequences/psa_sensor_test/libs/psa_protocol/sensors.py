@@ -231,23 +231,43 @@ class TestReport:
         timestamp = struct.unpack('>I', data[idx:idx+4])[0]; idx += 4
 
         results = []
+        data_len = len(data)
         for _ in range(sensor_count):
             sensor_id = data[idx]; idx += 1
             status = data[idx]; idx += 1
 
             # Parse sensor-specific result (size depends on sensor type)
+            # MCU always serializes result data regardless of status
             result: Optional[Union[MLX90640Result, VL53L0XResult]] = None
             if sensor_id == SensorID.MLX90640:
-                result_data = data[idx:idx+14]; idx += 14  # MLX90640: 14 bytes
-                if status in (TestStatus.PASS, TestStatus.FAIL_INVALID):
-                    result = MLX90640Result.from_bytes(result_data)
+                result_size = 14  # MLX90640: 14 bytes
+                remaining = data_len - idx
+                if remaining >= result_size:
+                    result_data = data[idx:idx+result_size]
+                    idx += result_size
+                    # Only parse result for statuses that have valid data
+                    if status in (TestStatus.PASS, TestStatus.FAIL_INVALID):
+                        result = MLX90640Result.from_bytes(result_data)
+                else:
+                    # Log warning: MCU didn't send expected result data
+                    import logging
+                    logging.getLogger(__name__).warning(
+                        f"MLX90640: expected {result_size} bytes, got {remaining}. "
+                        f"Data: {data.hex()}, idx={idx}, status={status}"
+                    )
             elif sensor_id == SensorID.VL53L0X:
-                result_data = data[idx:idx+8]; idx += 8    # VL53L0X: 8 bytes
-                if status in (TestStatus.PASS, TestStatus.FAIL_INVALID):
-                    result = VL53L0XResult.from_bytes(result_data)
+                result_size = 8   # VL53L0X: 8 bytes
+                remaining = len(data) - idx
+                if remaining >= result_size:
+                    result_data = data[idx:idx+result_size]
+                    idx += result_size
+                    if status in (TestStatus.PASS, TestStatus.FAIL_INVALID):
+                        result = VL53L0XResult.from_bytes(result_data)
             else:
-                # Unknown sensor, skip 8 bytes as default
-                idx += 8
+                # Unknown sensor, skip 8 bytes as default if available
+                remaining = len(data) - idx
+                if remaining >= 8:
+                    idx += 8
 
             results.append(SensorTestResult(sensor_id, status, result))
 
