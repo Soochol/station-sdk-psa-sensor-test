@@ -2,7 +2,7 @@
 # VL53L0X ToF distance sensor and MLX90640 IR thermal sensor test
 
 name: psa_sensor_test
-version: "1.0.6"
+version: "2.0.0"
 author: "Station SDK Team"
 description: |
   PSA (Preconfigured Sensor Array) sensor test sequence.
@@ -10,16 +10,14 @@ description: |
 
 # Execution mode settings
 modes:
-  automatic: true      # Automatic sequential execution
-  manual: true         # Manual step-by-step execution
-  cli: true            # CLI subprocess execution (SDK v2.0)
-  interactive: false
+  automatic: true
+  manual: true
+  cli: true
 
 # Entry point settings
 entry_point:
   module: sequence
   class: PSASensorTestSequence
-  cli_main: main         # CLI entry point (main.py)
 
 # Hardware definitions
 hardware:
@@ -46,74 +44,6 @@ hardware:
         min: 1.0
         max: 30.0
         description: "Response timeout (seconds)"
-    manual_commands:
-      - name: ping
-        display_name: "Connection Check (PING)"
-        category: diagnostic
-        description: "Check MCU connection and firmware version"
-        parameters: []
-        returns:
-          type: string
-          description: "Firmware version (e.g., 1.0.0)"
-
-      - name: get_sensor_list
-        display_name: "Get Sensor List"
-        category: diagnostic
-        description: "Get list of registered sensors"
-        parameters: []
-        returns:
-          type: array
-          description: "Sensor info list"
-
-      - name: test_vl53l0x
-        display_name: "VL53L0X Test"
-        category: measurement
-        description: "Run ToF distance sensor test"
-        parameters:
-          - name: target_mm
-            display_name: "Target Distance"
-            type: integer
-            required: false
-            default: 500
-            min: 30
-            max: 2000
-            unit: "mm"
-          - name: tolerance_mm
-            display_name: "Tolerance"
-            type: integer
-            required: false
-            default: 100
-            min: 1
-            max: 500
-            unit: "mm"
-        returns:
-          type: object
-          description: "Test result"
-
-      - name: test_mlx90640
-        display_name: "MLX90640 Test"
-        category: measurement
-        description: "Run IR thermal sensor test"
-        parameters:
-          - name: target_celsius
-            display_name: "Target Temperature"
-            type: float
-            required: false
-            default: 25.0
-            min: -40.0
-            max: 300.0
-            unit: "C"
-          - name: tolerance_celsius
-            display_name: "Tolerance"
-            type: float
-            required: false
-            default: 10.0
-            min: 0.1
-            max: 50.0
-            unit: "C"
-        returns:
-          type: object
-          description: "Test result"
 
 # Sequence parameters
 parameters:
@@ -123,6 +53,19 @@ parameters:
     type: string
     default: "/dev/ttyUSB0"
     description: "MCU serial port (e.g., /dev/ttyUSB0, COM3)"
+
+  baudrate:
+    display_name: "Baudrate"
+    type: integer
+    default: 115200
+    description: "Communication speed (bps)"
+
+  timeout:
+    display_name: "Timeout"
+    type: float
+    default: 5.0
+    unit: "s"
+    description: "Response timeout (seconds)"
 
   # VL53L0X parameters
   vl53l0x_target_mm:
@@ -180,93 +123,53 @@ parameters:
     display_name: "Stop on Failure"
     type: boolean
     default: true
-    description: "Stop sequence immediately on step failure (if false, run all steps)"
+    description: "Stop sequence immediately on step failure"
 
 # Step definitions
-# Note: setup and teardown are lifecycle steps automatically added by the SDK.
 steps:
   - name: setup
     display_name: "Setup"
     order: 0
-    timeout: 30.0
-    estimated_duration: 3.0
-    manual:
-      skippable: false
-      auto_only: true
+    lifecycle: true
+    description: "Hardware initialization and connection"
 
   - name: ping_pong
     display_name: "PING/PONG Communication Test"
     order: 1
     timeout: 10.0
-    estimated_duration: 1.0
-    manual:
-      skippable: false
-      auto_only: false
-      prompt: null
-      pause_before: false
-      pause_after: false
+    description: "Verify MCU communication"
 
   - name: initialize
     display_name: "Get Sensor List"
     order: 2
     timeout: 30.0
-    estimated_duration: 5.0
-    manual:
-      skippable: false
-      auto_only: false
-      prompt: null
-      pause_before: false
-      pause_after: false
+    description: "Retrieve registered sensors from MCU"
 
   - name: test_vl53l0x
     display_name: "VL53L0X Distance Test"
     order: 3
     timeout: 15.0
-    estimated_duration: 8.0
-    retry: 1
-    manual:
-      skippable: true
-      prompt: "Test VL53L0X ToF distance sensor."
-      pause_before: false
-      pause_after: false
-      parameter_overrides:
-        - vl53l0x_target_mm
-        - vl53l0x_tolerance_mm
+    description: "Test ToF distance sensor"
 
   - name: test_mlx90640
     display_name: "MLX90640 Temperature Test"
     order: 4
     timeout: 20.0
-    estimated_duration: 12.0
-    retry: 1
-    manual:
-      skippable: true
-      prompt: "Test MLX90640 IR thermal sensor."
-      pause_before: false
-      pause_after: false
-      parameter_overrides:
-        - mlx90640_target_celsius
-        - mlx90640_tolerance_celsius
+    description: "Test IR thermal sensor"
 
   - name: finalize
     display_name: "Finalize"
     order: 5
     timeout: 10.0
-    estimated_duration: 2.0
-    cleanup: true
-    manual:
-      skippable: false
-      auto_only: false
+    description: "Summarize test results"
 
   - name: teardown
     display_name: "Teardown"
     order: 6
-    timeout: 10.0
-    estimated_duration: 1.0
-    manual:
-      skippable: false
-      auto_only: true
+    lifecycle: true
+    description: "Resource cleanup and disconnection"
 
-# Python dependencies (defined in pyproject.toml)
+# Python dependencies
 dependencies:
-  python: []
+  python:
+    - pyserial>=3.5
